@@ -353,16 +353,19 @@ export class Enemy {
             // Make bullet look like it's embedded in the enemy - more cube-like but still visible
             const bulletScale = new THREE.Vector3(1.5, 1.5, 1.5); // More cube-like shape
             
-            // Add a slight random rotation for variety
-            bullet.mesh.rotation.set(
-                Math.random() * Math.PI * 0.5,
-                Math.random() * Math.PI * 2,
-                Math.random() * Math.PI * 0.5
-            );
-            bullet.mesh.scale.copy(bulletScale);
-            
-            // Update the bullet's position to match the attachment point
-            bullet.mesh.position.copy(this.mesh.position).add(randomOffset);
+            // Only try to set rotation and position if the bullet has a mesh
+            if (bullet.mesh) {
+                // Add a slight random rotation for variety
+                bullet.mesh.rotation.set(
+                    Math.random() * Math.PI * 0.5,
+                    Math.random() * Math.PI * 2,
+                    Math.random() * Math.PI * 0.5
+                );
+                bullet.mesh.scale.copy(bulletScale);
+                
+                // Update the bullet's position to match the attachment point
+                bullet.mesh.position.copy(this.mesh.position).add(randomOffset);
+            }
             
             // Notify bullet that it's attached
             bullet.attachToEnemy(this);

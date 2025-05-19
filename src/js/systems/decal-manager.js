@@ -3,6 +3,7 @@ import { COLORS } from '../utils/constants.js';
 
 export class DecalManager {
     constructor(scene) {
+        console.log('DecalManager initialized');
         this.scene = scene;
         this.decals = [];
         this.maxDecals = 80; // Reduced maximum decals (was 200)
@@ -84,6 +85,7 @@ export class DecalManager {
 
     // Create a decal on a surface (rocks, trees, etc.)
     createSurfaceDecal(position, normal, object, color = null) {
+        console.log('Creating surface decal');
         // Check if we're at capacity before creating a new decal
         if (this.decals.length >= this.maxDecals) {
             this.removeOldestDecal();
@@ -139,6 +141,7 @@ export class DecalManager {
     
     // Create a decal on the ground using texture splatting
     createGroundSplat(position, size = 0.7, color = null) {
+        console.log('Creating ground splat');
         // Check if we're at capacity before creating a new decal
         if (this.decals.length >= this.maxDecals) {
             this.removeOldestDecal();

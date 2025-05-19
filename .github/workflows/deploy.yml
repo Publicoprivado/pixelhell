@@ -25,11 +25,24 @@ jobs:
           node-version: '18'
           cache: 'npm'
 
+      - name: Debug Environment
+        run: |
+          pwd
+          ls -la
+          node --version
+          npm --version
+          cat package.json
+
       - name: Install Dependencies
-        run: npm install
+        run: npm ci || npm install
 
       - name: Build
         run: npm run build
+        
+      - name: Debug Build Output
+        run: |
+          ls -la
+          ls -la dist || echo "No dist directory found"
         
       - name: Setup Pages
         uses: actions/configure-pages@v4

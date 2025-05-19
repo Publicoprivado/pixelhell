@@ -167,7 +167,7 @@ export class CollisionSystem {
             // Always set movement penalty to 1.0 (no penalty)
             this.player.movementPenalty = 1.0;
             return;
-        }
+            } 
         
         // If colliding with one or more obstacles, handle sliding
         if (collidingObstacles.length > 0) {
@@ -375,7 +375,7 @@ export class CollisionSystem {
                                 const combinedDirection = totalMoveDirection.clone()
                                     .multiplyScalar(0.9)
                                     .add(toPlayer.multiplyScalar(0.1))
-                                    .normalize();
+                        .normalize();
                                 
                                 // Apply high smoothing for direct collisions
                                 enemy.direction.lerp(combinedDirection, 0.7);
@@ -429,8 +429,8 @@ export class CollisionSystem {
                                         .addScaledVector(totalMoveDirection, 0.5)
                                         .addScaledVector(enemy.avoidanceHistory, 0.5)
                             .normalize();
-                                }
-                                
+                    }
+                    
                                 // Apply smooth transition to new direction with inertia
                                 // Gradually increase responsiveness based on distance to obstacle
                                 const closestObstacle = this.findClosestObstacle(enemyPos, collidingObstacles);
@@ -502,8 +502,8 @@ export class CollisionSystem {
                         // Blend direction with separation vector - keep movement smooth
                         enemy.direction.lerp(randomizedSeparation, 0.4);
                         enemy.direction.normalize();
-                    }
                 }
+            }
             });
             
             // Store current position for next frame

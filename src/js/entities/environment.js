@@ -1,5 +1,4 @@
-import * as THREE from 'three';
-import { COLORS, SIZES, GAME } from '../utils/constants.js';
+import * as THREE from 'three';import { COLORS, SIZES, GAME } from '../utils/constants.js';import { TextLabel } from '../utils/text-label.js';
 
 export class Ground {
     constructor(scene) {
@@ -203,6 +202,19 @@ export class AmmoPack {
         this.arrow.position.copy(this.position);
         this.arrow.position.y = 1.2 + this.baseHeight; // Position above the ammo box
         this.scene.add(this.arrow);
+        
+        // Add text label with fixed position in screen space
+        this.label = new TextLabel(
+            this.scene, 
+            'AMMO', 
+            this.position, 
+            {
+                offset: new THREE.Vector3(0, 2.5, 0),
+                color: '#ffffff',
+                backgroundColor: null,
+                fontSize: 13
+            }
+        );
     }
     
     update(dt) {
@@ -245,6 +257,11 @@ export class AmmoPack {
         this.scene.remove(this.light);
         this.scene.remove(this.pulseLight);
         this.scene.remove(this.arrow);
+        
+        // Remove the label
+        if (this.label) {
+            this.label.remove();
+        }
         
         // Clean up materials and geometries
         this.group.traverse((object) => {
@@ -314,6 +331,19 @@ export class EnergyPack {
         this.arrow.position.copy(this.position);
         this.arrow.position.y = this.baseHeight + 1.0; // Position above the energy pack
         this.scene.add(this.arrow);
+        
+        // Add text label with fixed position in screen space
+        this.label = new TextLabel(
+            this.scene, 
+            'LIFE', 
+            this.position, 
+            {
+                offset: new THREE.Vector3(0, 2.5, 0),
+                color: '#ffffff', // White text
+                backgroundColor: null, // No background
+                fontSize: 13
+            }
+        );
     }
     
     update(dt) {
@@ -355,6 +385,11 @@ export class EnergyPack {
         this.scene.remove(this.mesh);
         this.scene.remove(this.light);
         if (this.arrow) this.scene.remove(this.arrow);
+        
+        // Remove the label
+        if (this.label) {
+            this.label.remove();
+        }
         
         // Clean up materials and geometries
         this.mesh.geometry.dispose();
@@ -578,7 +613,7 @@ export class Stump {
         const ringsGeometry = new THREE.CircleGeometry(this.size * 0.4, 16);
         const ringsMaterial = new THREE.MeshBasicMaterial({ color: 0x8B5A2B });
         const rings = new THREE.Mesh(ringsGeometry, ringsMaterial);
-        rings.rotation.x = -Math.PI / 2; // Rotate to be horizontal
+        rings.rotation.x = 90; // Rotate to be horizontal
         rings.position.y = this.size * 0.6; // Place on top of stump
         
         // Add some moss patches

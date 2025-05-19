@@ -182,7 +182,8 @@ export class Enemy {
     getOptimalShootingDistance() {
         switch(this.type) {
             case 'CHUBBY':
-                return 3; // Chubby enemies prefer to be closer (was 8)
+                return 3
+                ; // Chubby enemies prefer to be closer (was 8)
             case 'THIN':
                 return 3; // Thin enemies prefer to stay further away (was 12)
             default: // REGULAR

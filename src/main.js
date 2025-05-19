@@ -419,8 +419,7 @@ class Game {
     }
     
     setupWorld() {
-        // Create ground first
-        this.ground = new Ground(this.scene);
+        // Ground removed - using grey background instead
         
         // Create obstacles for cover (avoiding central obstacle)
         this.createObstacles();
@@ -901,38 +900,8 @@ window.addEventListener('DOMContentLoaded', () => {
             // Remove the start screen
             document.body.removeChild(startContainer);
             
-            // Initialize the game
+            // Initialize the game and expose it globally
             window.gameInstance = new Game();
-            
-            // Show brief controls hint that fades out
-            const controlsHint = document.createElement('div');
-            controlsHint.innerHTML = `
-                <div style="text-align: center; color: white; font-family: 'Press Start 2P'; font-size: 12px; 
-                     background-color: rgba(0,0,0,0.8); padding: 15px; border: 2px solid #ffffff;">
-                    <p>WASD = MOVE</p>
-                    <p>MOUSE = AIM</p>
-                    <p>CLICK = SHOOT</p>
-                    <p>RIGHT CLICK = GRENADE</p>
-                </div>
-            `;
-            controlsHint.style.position = 'absolute';
-            controlsHint.style.bottom = '100px';
-            controlsHint.style.left = '50%';
-            controlsHint.style.transform = 'translateX(-50%)';
-            controlsHint.style.opacity = '1';
-            controlsHint.style.transition = 'opacity 1s ease-in-out';
-            controlsHint.style.zIndex = '2000';
-            document.body.appendChild(controlsHint);
-            
-            // Fade out and remove after 5 seconds
-            setTimeout(() => {
-                controlsHint.style.opacity = '0';
-                setTimeout(() => {
-                    if (controlsHint.parentNode) {
-                        document.body.removeChild(controlsHint);
-                    }
-                }, 1000);
-            }, 4000);
         } catch (error) {
             console.error("Error starting game:", error);
         }

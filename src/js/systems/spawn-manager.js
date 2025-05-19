@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Enemy } from '../entities/enemy.js';
 import { AmmoPack, EnergyPack } from '../entities/environment.js';
 import { GAME, COLORS } from '../utils/constants.js';
+import { TextLabel } from '../utils/text-label.js';
 
 export class SpawnManager {
     constructor(scene, player, collisionSystem, audioManager, decalManager) {
@@ -339,7 +340,7 @@ export class SpawnManager {
         waveMsg.style.left = '50%';
         waveMsg.style.transform = 'translate(-50%, -50%)';
         waveMsg.style.color = 'red';
-        waveMsg.style.fontSize = '48px';
+        waveMsg.style.fontSize = '18px';
         waveMsg.style.fontFamily = '"Press Start 2P", cursive';
         waveMsg.style.textShadow = '2px 2px 4px black';
         waveMsg.style.zIndex = '1000';
@@ -354,7 +355,7 @@ export class SpawnManager {
         waveInfo.style.left = '50%';
         waveInfo.style.transform = 'translate(-50%, -50%)';
         waveInfo.style.color = 'orange';
-        waveInfo.style.fontSize = '24px';
+        waveInfo.style.fontSize = '14px';
         waveInfo.style.fontFamily = '"Press Start 2P", cursive';
         waveInfo.style.textShadow = '2px 2px 4px black';
         waveInfo.style.zIndex = '1000';
@@ -455,6 +456,19 @@ class GrenadePack {
         this.arrow.position.copy(this.position);
         this.arrow.position.y = this.baseHeight + 0.6; // Lower arrow height
         this.scene.add(this.arrow);
+        
+        // Add text label with fixed position in screen space
+        this.label = new TextLabel(
+            this.scene,
+            'BOMB',
+            this.position,
+            {
+                offset: new THREE.Vector3(0, 2.5, 0),
+                color: '#ffffff', // White text
+                backgroundColor: null, // No background
+                fontSize: 13
+            }
+        );
     }
     
     update(dt) {
@@ -502,6 +516,11 @@ class GrenadePack {
         });
         this.arrow.geometry.dispose();
         this.arrow.material.dispose();
+        
+        // Remove label
+        if (this.label) {
+            this.label.remove();
+        }
         
         // Play pickup sound
         this.audioManager.playPickup();

@@ -1,0 +1,1191 @@
+import * as THREE from 'three';
+import { COLORS, SIZES, GAME } from '../utils/constants.js';
+
+export class Bullet {
+    constructor(scene, position, direction, speedMultiplier = 1.0, color = COLORS.BULLET) {
+        this.scene = scene;
+        this.position = position.clone(); 
+        this.direction = direction.clone().normalize();
+        this.isActive = true;
+        
+        // Apply speed multiplier to allow for different speeds
+        // Use the new SPEEDS.BULLET value from constants for consistent behavior
+        this.speed = GAME.SPEEDS.BULLET * speedMultiplier;
+        
+        // Store initial position to track travel distance
+        this.initialPosition = position.clone();
+        this.maxTravelDistance = GAME.BULLET_MAX_DISTANCE;
+        
+        this.attachedToEnemy = false;
+        this.attachedEnemy = null;
+
+        // Create a cube mesh for the bullet to match the square theme
+        const geometry = new THREE.BoxGeometry(SIZES.BULLET, SIZES.BULLET, SIZES.BULLET); 
+        const material = new THREE.MeshBasicMaterial({ color: color });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        
+        // Rotate the bullet to align with its direction of travel
+        if (this.direction.x !== 0 || this.direction.z !== 0) {
+            // Calculate the angle between direction vector and the z-axis
+            this.mesh.rotation.y = Math.atan2(this.direction.x, this.direction.z);
+        }
+        
+        this.scene.add(this.mesh);
+    }
+
+    update(dt) {
+        if (!this.isActive || !this.mesh) {
+            return;
+        }
+        
+        // If attached to an enemy, don't update position independently
+        if (this.attachedToEnemy) {
+            return;
+        }
+
+        // Move the bullet mesh
+        const moveDistance = this.speed * dt; 
+        if (isNaN(moveDistance) || moveDistance === undefined) {
+            console.error("[Bullet.update] moveDistance is NaN or undefined!", {speed: this.speed, dt: dt});
+            return;
+        }
+        
+        const moveVector = this.direction.clone().multiplyScalar(moveDistance);
+        if (isNaN(moveVector.x) || isNaN(moveVector.y) || isNaN(moveVector.z)) {
+            console.error("[Bullet.update] moveVector has NaN components!", {direction: this.direction, moveDistance: moveDistance});
+            return;
+        }
+
+        this.mesh.position.add(moveVector);
+        this.position.copy(this.mesh.position); 
+
+        // Check if bullet has traveled its maximum distance
+        const distanceTraveled = this.position.distanceTo(this.initialPosition);
+        if (distanceTraveled >= this.maxTravelDistance) {
+            this.deactivate();
+        }
+    }
+    
+    // Called when the bullet hits an enemy
+    attachToEnemy(enemy) {
+        this.attachedToEnemy = true;
+        this.attachedEnemy = enemy;
+        
+        // Stop bullet's independent movement
+        this.speed = 0;
+    }
+
+    deactivate() {
+        if (!this.isActive) return;
+        this.isActive = false;
+        
+        if (this.mesh) {
+            this.scene.remove(this.mesh);
+            this.mesh.geometry.dispose();
+            this.mesh.material.dispose();
+            this.mesh = null; 
+        }
+    }
+    
+    getPosition() {
+        return this.position;
+    }
+    
+    getBoundingRadius() {
+        // Increase bullet collision radius to make hits easier
+        const radius = SIZES.BULLET * 2.5;
+        return radius; 
+    }
+    
+    // Create a decal instead of staying as a 3D object - added for compatibility with OptimizedBullet
+    createImpactDecal(position, normal, object) {
+        // Just deactivate the bullet - the collision system will handle the splat
+        this.deactivate();
+    }
+}
+
+// Raycast bullet - instant hit, no travel
+export class InstantBullet {
+    constructor(scene, position, direction, enemies) {
+        this.scene = scene;
+        this.position = position.clone();
+        this.direction = direction.clone().normalize();
+        this.isActive = true;
+        
+        // Immediately trace the path and check for hits
+        this.traceBullet(enemies);
+    }
+    
+    traceBullet(enemies) {
+        // Create a visible line for the shot
+        const lineGeometry = new THREE.BufferGeometry();
+        const startPoint = this.position.clone();
+        let endPoint = this.position.clone().add(this.direction.clone().multiplyScalar(100));
+        
+        // Check if we hit any enemies
+        let hitEnemy = null;
+        let closestDistance = Infinity;
+        
+        if (enemies && enemies.length > 0) {
+            for (const enemy of enemies) {
+                const enemyPos = enemy.getPosition();
+                const enemyRadius = enemy.getBoundingRadius();
+                
+                // Create a ray from bullet position in bullet direction
+                const ray = new THREE.Ray(this.position, this.direction);
+                
+                // Check if ray intersects enemy sphere
+                const sphere = new THREE.Sphere(enemyPos, enemyRadius);
+                const intersection = ray.intersectSphere(sphere, new THREE.Vector3());
+                
+                if (intersection) {
+                    // Calculate distance to hit
+                    const distance = intersection.distanceTo(this.position);
+                    
+                    // If this is the closest hit, store it
+                    if (distance < closestDistance) {
+                        closestDistance = distance;
+                        hitEnemy = enemy;
+                        endPoint = intersection.clone();
+                    }
+                }
+            }
+        }
+        
+        // Create the line from start to end point
+        const linePoints = [startPoint, endPoint];
+        lineGeometry.setFromPoints(linePoints);
+        
+        // Create a bright material for the line
+        const lineMaterial = new THREE.LineBasicMaterial({
+            color: 0xff0000,
+            linewidth: 10,
+        });
+        
+        this.line = new THREE.Line(lineGeometry, lineMaterial);
+        this.scene.add(this.line);
+        
+        // If we hit an enemy, damage it
+        if (hitEnemy) {
+            hitEnemy.takeDamage(1);
+            this.createHitEffect(endPoint);
+        }
+        
+        // Remove the line after a short delay
+        setTimeout(() => {
+            this.deactivate();
+        }, 100);
+    }
+    
+    createHitEffect(position) {
+        // Create a bright flash at the hit position
+        const flashGeometry = new THREE.SphereGeometry(0.5, 8, 8);
+        const flashMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffff00,
+            transparent: true,
+            opacity: 1.0
+        });
+        
+        const flash = new THREE.Mesh(flashGeometry, flashMaterial);
+        flash.position.copy(position);
+        this.scene.add(flash);
+        
+        // Create a point light at the hit position
+        const light = new THREE.PointLight(0xffff00, 5, 3);
+        light.position.copy(position);
+        this.scene.add(light);
+        
+        // Fade out and remove
+        let opacity = 1.0;
+        let scale = 0.5;
+        
+        const fadeOut = () => {
+            opacity -= 0.1;
+            scale += 0.1;
+            
+            flashMaterial.opacity = opacity;
+            flash.scale.set(scale, scale, scale);
+            light.intensity = opacity * 5;
+            
+            if (opacity > 0) {
+                requestAnimationFrame(fadeOut);
+            } else {
+                this.scene.remove(flash);
+                this.scene.remove(light);
+                flashGeometry.dispose();
+                flashMaterial.dispose();
+            }
+        };
+        
+        fadeOut();
+    }
+    
+    update() {
+        // No update needed - this is an instant bullet
+    }
+    
+    deactivate() {
+        if (!this.isActive) return;
+        
+        this.isActive = false;
+        
+        // Remove the line
+        if (this.line) { // Check if line exists
+            this.scene.remove(this.line);
+            this.line.geometry.dispose();
+            this.line.material.dispose();
+            this.line = null; // Clear reference
+        }
+    }
+    
+    getPosition() {
+        return this.position;
+    }
+}
+
+export class Grenade {
+    constructor(scene, position, direction, audioManager, decalManager) {
+        this.scene = scene;
+        this.audioManager = audioManager;
+        this.decalManager = decalManager; // Store reference to decalManager
+        this.position = position.clone();
+        this.initialPosition = position.clone();
+        this.direction = direction.clone().normalize();
+        this.speed = GAME.SPEEDS.GRENADE;
+        this.isActive = true;
+        this.hasExploded = false;
+        this.explosionActive = false; // Flag to track if explosion is in active damage phase
+        this.throwTime = performance.now(); // Use performance.now for more precise timing
+        this.explosionRadius = GAME.GRENADE_EXPLOSION_RADIUS;
+        this.throwStrength = GAME.GRENADE_THROW_STRENGTH;
+        this.explodeAfter = GAME.GRENADE_EXPLOSION_DELAY; // Cache this value
+        
+        // Lower gravity effect for flatter arc and longer distance
+        this.gravityEffect = 0.01; // Reduced from 0.02 for flatter arc
+        
+        // Lower initial vertical velocity for flatter arc
+        this.verticalVelocity = this.throwStrength * 0.3; // Reduced from 0.7 for flatter trajectory
+        
+        // Start position slightly higher
+        this.position.y += 0.5; // Start above the player's hand
+        
+        // Use smaller step size for finer motion
+        this.stepSize = 0.15;
+        
+        // Track the last bounce time to avoid playing the sound too frequently
+        this.lastBounceTime = 0;
+        this.bounceThreshold = 300; // minimum ms between bounce sounds
+        
+        // Create the actual grenade mesh
+        this.createGrenadeMesh();
+    }
+    
+    createGrenadeMesh() {
+        // Use a more grenade-like shape but smaller
+        const size = 0.3; // Reduced size (was 0.8) for less oversized grenade
+        // Use dodecahedron for more grenade-like shape
+        const geometry = new THREE.DodecahedronGeometry(size, 0);
+        const material = new THREE.MeshPhongMaterial({ 
+            color: 0xff3300, // Bright orange-red for better visibility
+            emissive: 0xff2200, // Bright emissive color
+            shininess: 80
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        
+        // Start higher off the ground for better visibility
+        this.mesh.position.y = Math.max(this.mesh.position.y, size + 0.3); // Reduced height
+        
+        this.scene.add(this.mesh);
+        
+        // Add a small light
+        this.light = new THREE.PointLight(0xff5500, 2, 5); // Reduced intensity and radius
+        this.light.position.copy(this.position);
+        this.scene.add(this.light);
+        
+        // Create a trail effect with particles
+        this.createTrailEffect();
+    }
+    
+    createTrailEffect() {
+        // Particle system for trail effect
+        this.trailParticles = [];
+        this.maxTrailParticles = 12; // Reduced from 20
+        this.trailUpdateRate = 50; // Faster updates for smoother trail
+        this.lastTrailUpdate = performance.now();
+        
+        // Create initial particles
+        for (let i = 0; i < this.maxTrailParticles; i++) {
+            const particle = new THREE.Mesh(
+                new THREE.SphereGeometry(0.15, 4, 4),
+                new THREE.MeshBasicMaterial({
+                    color: 0xff5500,
+                    transparent: true,
+                    opacity: 0.8,
+                    blending: THREE.AdditiveBlending
+                })
+            );
+            
+            // Hide initially
+            particle.visible = false;
+            particle.userData = {
+                active: false,
+                age: 0,
+                maxAge: 500, // Reduced lifetime for faster fading
+                startOpacity: 0.8,
+                startScale: 0.8,
+                endScale: 0.2 // Will shrink as it fades
+            };
+            
+            this.scene.remove(particle);
+            this.scene.add(particle);
+            this.trailParticles.push(particle);
+        }
+    }
+    
+    updateTrailEffect() {
+        if (!this.isActive || this.hasExploded) return;
+
+        const now = performance.now();
+        
+        // Only update trail on a schedule to avoid performance issues
+        if (now - this.lastTrailUpdate > this.trailUpdateRate) {
+            this.lastTrailUpdate = now;
+            
+            // Find an inactive particle
+            let particle = null;
+            for (const p of this.trailParticles) {
+                if (!p.userData.active) {
+                    particle = p;
+                    break;
+                }
+            }
+            
+            // If all particles are active, reuse the oldest one
+            if (!particle) {
+                let oldestAge = 0;
+                for (const p of this.trailParticles) {
+                    if (p.userData.age > oldestAge) {
+                        oldestAge = p.userData.age;
+                        particle = p;
+                    }
+                }
+            }
+            
+            // Position particle at current grenade position
+            if (particle) {
+                particle.position.copy(this.mesh.position);
+                particle.visible = true;
+                particle.userData.active = true;
+                particle.userData.age = 0;
+                particle.scale.setScalar(particle.userData.startScale);
+                particle.material.opacity = particle.userData.startOpacity;
+            }
+        }
+        
+        // Update all active particles every frame for smooth fading
+        const dt = 16;
+        for (const particle of this.trailParticles) {
+            if (particle.userData.active) {
+                particle.userData.age += dt;
+                
+                // Fade out based on age
+                const lifeRatio = particle.userData.age / particle.userData.maxAge;
+                
+                if (lifeRatio > 1) {
+                    // Deactivate particle
+                    particle.userData.active = false;
+                    particle.visible = false;
+                } else {
+                    // Smooth fade out with easing
+                    const fadeRatio = 1 - (lifeRatio * lifeRatio); // Quadratic easing
+                    particle.material.opacity = particle.userData.startOpacity * fadeRatio;
+                    
+                    // Smoothly scale down
+                    const scale = particle.userData.startScale + 
+                        (particle.userData.endScale - particle.userData.startScale) * lifeRatio;
+                    particle.scale.setScalar(scale);
+                }
+            }
+        }
+    }
+    
+    update(dt) {
+        if (!this.isActive || this.hasExploded) return;
+        
+        // Use elapsed time in seconds for more precise physics
+        const now = performance.now();
+        const elapsedTime = (now - this.throwTime) / 1000;
+        
+        // Apply horizontal movement using consistent step size
+        const horizontalMovement = this.direction.clone().multiplyScalar(this.speed * this.stepSize);
+        this.mesh.position.x += horizontalMovement.x;
+        this.mesh.position.z += horizontalMovement.z;
+        
+        // Update vertical position using physics
+        this.verticalVelocity -= this.gravityEffect; // Apply gravity
+        this.mesh.position.y += this.verticalVelocity;
+        
+        // If grenade hits ground, make it bounce slightly and roll
+        if (this.mesh.position.y < 0.3) {
+            this.mesh.position.y = 0.3;
+            
+            // Check if the bounce is significant enough to play sound
+            // and if enough time has passed since the last bounce
+            if (Math.abs(this.verticalVelocity) > 0.01 && now - this.lastBounceTime > this.bounceThreshold) {
+                // Play bounce sound with volume proportional to impact velocity
+                this.audioManager.playGrenadeBounce();
+                this.lastBounceTime = now;
+            }
+            
+            this.verticalVelocity = Math.abs(this.verticalVelocity) * 0.3; // Small bounce
+            
+            // Reduce horizontal speed to simulate friction
+            this.speed *= 0.9;
+        }
+        
+        // Update light position
+        this.light.position.copy(this.mesh.position);
+        
+        // Blink the light faster as it gets closer to explosion
+        const timeToExplode = this.explodeAfter - (now - this.throwTime);
+        const blinkSpeed = Math.max(1, 10 - (timeToExplode / 200)); // Blink faster as time runs out
+        this.light.intensity = 2.5 + Math.sin(elapsedTime * blinkSpeed * Math.PI) * 1.5;
+        
+        // Rotate grenade as it moves to simulate tumbling
+        this.mesh.rotation.x += dt * 5;
+        this.mesh.rotation.y += dt * 3;
+        this.mesh.rotation.z += dt * 4;
+        
+        // Update trail effect less frequently based on frame rate
+        this.updateTrailEffect();
+        
+        this.position.copy(this.mesh.position);
+        
+        // Check if grenade should explode
+        if (now - this.throwTime > this.explodeAfter) {
+            this.explode();
+        }
+        
+        // Check if grenade is out of bounds
+        const halfSize = GAME.ARENA_SIZE / 2;
+        if (
+            this.position.x < -halfSize || 
+            this.position.x > halfSize || 
+            this.position.z < -halfSize || 
+            this.position.z > halfSize
+        ) {
+            this.deactivate();
+        }
+    }
+    
+    explode() {
+        if (!this.isActive || this.hasExploded) return;
+        
+        this.hasExploded = true;
+        this.explosionActive = true;
+        
+        // Play the explosion sound
+        this.audioManager.playGrenadeExplosion();
+        
+        // Create explosion with async object creation to reduce lag
+        if (this.decalManager) {
+            const centralSplatPosition = this.position.clone();
+            centralSplatPosition.y = 0.02;
+            this.decalManager.createGroundSplat(centralSplatPosition, this.explosionRadius * 1.2, 0x9B870C);
+        }
+        
+        // Immediately hide the grenade mesh and light
+        if (this.mesh) {
+            this.mesh.visible = false;
+        }
+        if (this.light) {
+            this.light.visible = false;
+        }
+        
+        // Clean up trail particles
+        if (this.trailParticles) {
+            this.trailParticles.forEach(particle => {
+                particle.visible = false;
+                particle.userData.active = false;
+            });
+        }
+        
+        // Do the particle effects in the next frame
+        requestAnimationFrame(() => {
+            this.createExplosionEffect();
+        });
+        
+        // Disable explosion damage after a short delay
+        setTimeout(() => {
+            this.explosionActive = false;
+            
+            // Remove original grenade mesh and light
+            if (this.mesh && this.mesh.parent) {
+                this.scene.remove(this.mesh);
+                this.mesh.geometry.dispose();
+                this.mesh.material.dispose();
+                this.mesh = null;
+            }
+            if (this.light && this.light.parent) {
+                this.scene.remove(this.light);
+                this.light = null;
+            }
+        }, 400);
+        
+        // Set a shorter timer for debris fade and removal
+        setTimeout(() => {
+            this.fadeOutDebris();
+        }, 3000); // Reduced to 3 seconds
+    }
+    
+    createExplosionEffect() {
+        // Create a bright light at explosion center
+        const explosionLight = new THREE.PointLight(0x9B870C, 8, this.explosionRadius * 2.5);
+        explosionLight.position.copy(this.position);
+        explosionLight.position.y = this.explosionRadius * 0.4;
+        this.scene.add(explosionLight);
+        
+        // Create a shockwave ring
+        const ringGeometry = new THREE.RingGeometry(0.08, 0.4, 12); // Further reduced from 16
+        const ringMaterial = new THREE.MeshBasicMaterial({
+            color: 0x9B870C,
+            transparent: true,
+            opacity: 1.0,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+        ring.position.copy(this.position);
+        ring.position.y = 0.1; // Just above ground
+        ring.rotation.x = Math.PI / 2; // Flat on ground
+        this.scene.add(ring);
+        
+        // Create particle effect for explosion with fewer particles
+        const particleCount = 40; // Reduced from 60
+        const particles = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+        
+        for (let i = 0; i < particleCount; i++) {
+            // Random position within sphere
+            const radius = Math.random() * this.explosionRadius * 0.8;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.random() * Math.PI;
+            
+            positions[i * 3] = this.position.x + radius * Math.sin(phi) * Math.cos(theta);
+            positions[i * 3 + 1] = this.position.y + radius * Math.sin(phi) * Math.sin(theta);
+            positions[i * 3 + 2] = this.position.z + radius * Math.cos(phi);
+            
+            // Set all particles to the same yellow color
+            colors[i * 3] = 0.6; // R
+            colors[i * 3 + 1] = 0.5; // G
+            colors[i * 3 + 2] = 0.05; // B - slight yellow tint
+        }
+        
+        particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        particles.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        
+        const particleMaterial = new THREE.PointsMaterial({
+            size: 0.5,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            transparent: true,
+            sizeAttenuation: true,
+            depthWrite: false
+        });
+        
+        const particleSystem = new THREE.Points(particles, particleMaterial);
+        this.scene.add(particleSystem);
+        
+        // Create debris in second phase to stagger object creation
+        requestAnimationFrame(() => {
+            this.createDebrisEffect();
+        });
+        
+        // Animate the explosion - optimized version
+        let explosionTime = 0;
+        const explosionDuration = 400; // Fast animation
+        const frameTime = 16; // Approximately 60fps
+        let lastTime = performance.now();
+        
+        const animateExplosion = () => {
+            const now = performance.now();
+            const deltaTime = now - lastTime;
+            lastTime = now;
+            
+            explosionTime += deltaTime > 50 ? frameTime : deltaTime; // Frame limiting to prevent large jumps
+            const progress = explosionTime / explosionDuration;
+            
+            if (progress < 1) {
+                // Fade out light
+                if (explosionLight) {
+                    explosionLight.intensity = 8 * (1 - progress * 1.5);
+                }
+                
+                // Animate ring shockwave
+                const ringScale = 1 + progress * (this.explosionRadius * 8);
+                ring.scale.set(ringScale, ringScale, ringScale);
+                ringMaterial.opacity = (1 - progress * 1.2) * 0.7;
+                
+                // Animate particles outward - update every few frames for better performance
+                if (explosionTime % 32 === 0) {
+                    for (let i = 0; i < particleCount; i++) {
+                        const posIndex = i * 3;
+                        const dirX = positions[posIndex] - this.position.x;
+                        const dirY = positions[posIndex + 1] - this.position.y;
+                        const dirZ = positions[posIndex + 2] - this.position.z;
+                        
+                        const len = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+                        if (len > 0.01) {
+                            const speedFactor = 0.05 * (1 + progress * 2);
+                            positions[posIndex] += (dirX / len) * speedFactor;
+                            positions[posIndex + 1] += (dirY / len) * speedFactor;
+                            positions[posIndex + 2] += (dirZ / len) * speedFactor;
+                        }
+                    }
+                    particles.attributes.position.needsUpdate = true;
+                }
+                
+                particleMaterial.opacity = 1 - progress;
+                
+                requestAnimationFrame(animateExplosion);
+            } else {
+                // Cleanup
+                this.scene.remove(explosionLight);
+                this.scene.remove(particleSystem);
+                this.scene.remove(ring);
+                
+                // Dispose geometries and materials
+                particles.dispose();
+                particleMaterial.dispose();
+                ringGeometry.dispose();
+                ringMaterial.dispose();
+            }
+        };
+        
+        animateExplosion();
+    }
+    
+    createDebrisEffect() {
+        // Create debris particles with reduced count
+        const debrisCount = 8; // Reduced from 15
+        this.debrisParticles = [];
+        
+        // Reuse geometries for debris to reduce memory usage
+        const debrisGeometries = {
+            box: new THREE.BoxGeometry(1, 0.15, 0.8, 1, 1, 1), // Reduced complexity
+            circle: new THREE.CircleGeometry(1, 4), // Reduced from 6 segments
+            plane: new THREE.PlaneGeometry(1, 0.8, 1, 1), // Reduced complexity
+            cone: new THREE.ConeGeometry(0.5, 0.2, 4, 1), // Reduced segments
+            cylinder: new THREE.CylinderGeometry(0.5, 0.5, 0.1, 4, 1) // Reduced segments
+        };
+        
+        // Shared material for all debris
+        const debrisMaterial = new THREE.MeshPhongMaterial({
+            color: 0x9B870C,
+            emissive: 0x9B870C,
+            emissiveIntensity: 0.1,
+            shininess: 1
+        });
+        
+        for (let i = 0; i < debrisCount; i++) {
+            // Direction calculation
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.random() * Math.PI;
+            
+            const direction = new THREE.Vector3(
+                Math.sin(phi) * Math.cos(theta) * 1.2,
+                Math.random() * 0.2 + 0.1,
+                Math.sin(phi) * Math.sin(theta) * 1.2
+            );
+            
+            // Size for debris
+            const size = Math.random() * 0.35 + 0.05;
+            
+            // Select geometry from shared pool
+            let geometry;
+            const geomType = Math.floor(Math.random() * 5);
+            
+            if (geomType === 0) {
+                geometry = debrisGeometries.box;
+            } else if (geomType === 1) {
+                geometry = debrisGeometries.circle;
+            } else if (geomType === 2) {
+                geometry = debrisGeometries.plane;
+            } else if (geomType === 3) {
+                geometry = debrisGeometries.cone;
+            } else {
+                geometry = debrisGeometries.cylinder;
+            }
+            
+            const debris = new THREE.Mesh(geometry, debrisMaterial);
+            
+            // Scale to appropriate size
+            debris.scale.set(size, size, size);
+            
+            // Set initial rotation based on geometry type
+            if (geomType === 1 || geomType === 2) {
+                debris.rotation.set(
+                    Math.PI/2,
+                    Math.random() * Math.PI * 2,
+                    0
+                );
+            } else {
+                debris.rotation.set(
+                    Math.random() * Math.PI * 2,
+                    Math.random() * Math.PI * 2,
+                    Math.random() * Math.PI * 2
+                );
+            }
+            
+            // Position at explosion center
+            debris.position.copy(this.position);
+            this.scene.add(debris);
+            
+            // Store with metadata
+            this.debrisParticles.push({
+                mesh: debris,
+                direction: direction,
+                speed: Math.random() * 0.35 + 0.15,
+                rotationSpeed: {
+                    x: Math.random() * 0.2 - 0.1,
+                    y: Math.random() * 0.2 - 0.1,
+                    z: Math.random() * 0.2 - 0.1
+                },
+                settled: false
+            });
+        }
+        
+        // Animate debris with less frequent updates
+        const animateDebris = () => {
+            if (!this.isActive || !this.debrisParticles || this.debrisParticles.length === 0) return;
+            
+            for (const debris of this.debrisParticles) {
+                if (debris.settled) continue;
+                
+                // Move in direction
+                debris.mesh.position.x += debris.direction.x * debris.speed;
+                debris.mesh.position.y += debris.direction.y * debris.speed;
+                debris.mesh.position.z += debris.direction.z * debris.speed;
+                
+                // Apply gravity
+                debris.direction.y -= 0.05;
+                
+                // Floor bounce with friction
+                if (debris.mesh.position.y < 0.02) {
+                    debris.mesh.position.y = 0.01;
+                    
+                    // Apply friction
+                    const frictionFactor = 0.6;
+                    debris.direction.y = 0;
+                    debris.direction.x *= frictionFactor;
+                    debris.direction.z *= frictionFactor;
+                    
+                    // Check for settling
+                    if (debris.speed < 0.1) {
+                        debris.settled = true;
+                        debris.mesh.position.y = 0.01;
+                        
+                        // Make flat on ground
+                        const flatRotation = new THREE.Euler(
+                            Math.PI/2,
+                            Math.random() * Math.PI * 2,
+                            0
+                        );
+                        debris.mesh.setRotationFromEuler(flatRotation);
+                        
+                        // Stop rotation
+                        debris.rotationSpeed.x = 0;
+                        debris.rotationSpeed.y = 0;
+                        debris.rotationSpeed.z = 0;
+                    }
+                }
+                
+                // Rotate if not settled
+                if (!debris.settled) {
+                    debris.mesh.rotation.x += debris.rotationSpeed.x;
+                    debris.mesh.rotation.y += debris.rotationSpeed.y;
+                    debris.mesh.rotation.z += debris.rotationSpeed.z;
+                }
+                
+                // Slow down with air resistance
+                debris.speed *= 0.92;
+                
+                // Reduce rotation speed
+                const rotFactor = 0.9;
+                debris.rotationSpeed.x *= rotFactor;
+                debris.rotationSpeed.y *= rotFactor;
+                debris.rotationSpeed.z *= rotFactor;
+            }
+            
+            // Check if any debris is still moving
+            const anyMoving = this.debrisParticles.some(debris => !debris.settled);
+            if (anyMoving) {
+                requestAnimationFrame(animateDebris);
+            }
+        };
+        
+        // Start the animation
+        animateDebris();
+    }
+    
+    fadeOutDebris() {
+        if (!this.isActive || !this.debrisParticles || this.debrisParticles.length === 0) return;
+        
+        let fadeTime = 0;
+        const fadeDuration = 2000; // 2 second fade
+        
+        const fadeAnimation = () => {
+            fadeTime += 16;
+            const progress = fadeTime / fadeDuration;
+            
+            if (progress < 1) {
+                // Fade out opacity of all debris
+                this.debrisParticles.forEach(debris => {
+                    if (debris.mesh && debris.mesh.material) {
+                        debris.mesh.material.transparent = true;
+                        debris.mesh.material.opacity = 1 - progress;
+                    }
+                });
+                
+                requestAnimationFrame(fadeAnimation);
+            } else {
+                // After fade is complete, fully deactivate
+                this.deactivate();
+            }
+        };
+        
+        // Start the fade animation
+        fadeAnimation();
+    }
+    
+    deactivate() {
+        if (!this.isActive) return;
+        
+        this.isActive = false;
+        
+        // Any remaining cleanup
+        if (this.mesh && this.mesh.parent) {
+            this.scene.remove(this.mesh);
+            this.mesh.geometry.dispose();
+            this.mesh.material.dispose();
+        }
+        
+        if (this.light && this.light.parent) {
+            this.scene.remove(this.light);
+        }
+        
+        // Clean up trail particles
+        if (this.trailParticles) {
+            this.trailParticles.forEach(particle => {
+                if (particle && particle.parent) {
+                    this.scene.remove(particle);
+                    if (particle.geometry) particle.geometry.dispose();
+                    if (particle.material) particle.material.dispose();
+                }
+            });
+            this.trailParticles = [];
+        }
+        
+        // Clean up debris particles
+        if (this.debrisParticles) {
+            this.debrisParticles.forEach(debris => {
+                if (debris.mesh && debris.mesh.parent) {
+                    this.scene.remove(debris.mesh);
+                    if (debris.mesh.geometry) debris.mesh.geometry.dispose();
+                    if (debris.mesh.material) debris.mesh.material.dispose();
+                }
+            });
+            this.debrisParticles = [];
+        }
+    }
+    
+    getPosition() {
+        return this.position;
+    }
+    
+    getExplosionRadius() {
+        return this.explosionRadius;
+    }
+    
+    hasExploded() {
+        return this.hasExploded;
+    }
+    
+    isExplosionActive() {
+        return this.explosionActive;
+    }
+}
+
+// BulletManager class for instanced rendering of bullets
+export class BulletManager {
+    constructor(scene) {
+        this.scene = scene;
+        this.maxBullets = 100; // Maximum number of bullets to render
+        this.activeBullets = [];
+        this.decalManager = null;
+        
+        // Create instanced geometry and material
+        this.createInstancedMesh();
+    }
+    
+    setDecalManager(decalManager) {
+        this.decalManager = decalManager;
+    }
+    
+    createInstancedMesh() {
+        // Create a box geometry for the bullets
+        const geometry = new THREE.BoxGeometry(SIZES.BULLET, SIZES.BULLET, SIZES.BULLET);
+        const material = new THREE.MeshBasicMaterial({ color: COLORS.BULLET });
+        
+        // Create an instanced mesh with the maximum number of instances
+        this.instancedMesh = new THREE.InstancedMesh(geometry, material, this.maxBullets);
+        this.instancedMesh.count = 0; // Start with 0 instances
+        this.instancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); // Mark as dynamic
+        
+        // Disable frustum culling to prevent bullets from disappearing when outside camera frustum
+        this.instancedMesh.frustumCulled = false;
+        
+        this.scene.add(this.instancedMesh);
+        
+        // Create a matrix for transformations
+        this.matrix = new THREE.Matrix4();
+    }
+    
+    // Create a new bullet and return it
+    createBullet(position, direction, speedMultiplier = 1.0) {
+        // Create a bullet object but don't create a mesh for it
+        const bullet = new OptimizedBullet(this.scene, position, direction, speedMultiplier, this.decalManager, true);
+        
+        // Instead of adding a mesh to the scene, add it to our instances
+        if (this.activeBullets.length < this.maxBullets) {
+            // Assign an instance index
+            bullet.instanceId = this.activeBullets.length;
+            this.activeBullets.push(bullet);
+            
+            // Increase the count of visible instances
+            this.instancedMesh.count = this.activeBullets.length;
+            
+            // Update the instance matrix for this bullet
+            this.updateBulletInstance(bullet);
+        }
+        
+        return bullet;
+    }
+    
+    // Update the instance matrix for a specific bullet
+    updateBulletInstance(bullet) {
+        if (bullet.instanceId === undefined || bullet.instanceId >= this.maxBullets) {
+            return;
+        }
+        
+        // Set position
+        this.matrix.makeTranslation(
+            bullet.position.x,
+            bullet.position.y,
+            bullet.position.z
+        );
+        
+        // Set rotation to match direction
+        if (bullet.direction.x !== 0 || bullet.direction.z !== 0) {
+            const rotationMatrix = new THREE.Matrix4();
+            const target = bullet.position.clone().add(bullet.direction);
+            
+            // Create a quaternion for the rotation
+            const quaternion = new THREE.Quaternion();
+            const up = new THREE.Vector3(0, 1, 0);
+            quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), bullet.direction);
+            
+            // Apply rotation
+            rotationMatrix.makeRotationFromQuaternion(quaternion);
+            this.matrix.multiply(rotationMatrix);
+        }
+        
+        // Apply the matrix to the instance
+        this.instancedMesh.setMatrixAt(bullet.instanceId, this.matrix);
+        this.instancedMesh.instanceMatrix.needsUpdate = true;
+    }
+    
+    // Remove a bullet
+    removeBullet(bullet) {
+        // Find the bullet's index
+        const index = this.activeBullets.indexOf(bullet);
+        if (index === -1) return;
+        
+        // Remove the bullet
+        this.activeBullets.splice(index, 1);
+        
+        // Update the count
+        this.instancedMesh.count = this.activeBullets.length;
+        
+        // Update all bullet IDs and matrices after the removed one
+        for (let i = index; i < this.activeBullets.length; i++) {
+            this.activeBullets[i].instanceId = i;
+            this.updateBulletInstance(this.activeBullets[i]);
+        }
+    }
+    
+    // Update all bullets
+    update(dt) {
+        const bulletsToRemove = [];
+        
+        // Update all bullets
+        for (const bullet of this.activeBullets) {
+            // Update the bullet
+            bullet.update(dt);
+            
+            // If the bullet is inactive, mark it for removal
+            if (!bullet.isActive) {
+                bulletsToRemove.push(bullet);
+            } else {
+                // Update the instance matrix
+                this.updateBulletInstance(bullet);
+            }
+        }
+        
+        // Remove any inactive bullets
+        for (const bullet of bulletsToRemove) {
+            this.removeBullet(bullet);
+        }
+    }
+    
+    // Clean up resources
+    cleanUp() {
+        this.scene.remove(this.instancedMesh);
+        this.instancedMesh.geometry.dispose();
+        this.instancedMesh.material.dispose();
+        this.activeBullets = [];
+    }
+}
+
+export class OptimizedBullet {
+    constructor(scene, position, direction, speedMultiplier = 1.0, decalManager, useInstance = false, color = COLORS.BULLET) {
+        this.scene = scene;
+        this.position = position.clone(); 
+        this.direction = direction.clone().normalize();
+        this.isActive = true;
+        
+        // Apply speed multiplier to allow for different speeds
+        // Use the new SPEEDS.BULLET value from constants for consistent behavior
+        this.speed = GAME.SPEEDS.BULLET * speedMultiplier;
+        
+        // Store initial position to track travel distance
+        this.initialPosition = position.clone();
+        this.maxTravelDistance = GAME.BULLET_MAX_DISTANCE;
+        
+        this.attachedToEnemy = false;
+        this.attachedEnemy = null;
+        this.decalManager = decalManager;
+        this.useInstance = useInstance;
+        this.color = color; // Store the bullet color
+        
+        // Only create a mesh if we're not using instanced rendering
+        if (!useInstance) {
+            // Create a simple cube for the bullet to match the square theme
+            const geometry = new THREE.BoxGeometry(SIZES.BULLET, SIZES.BULLET, SIZES.BULLET); 
+            const material = new THREE.MeshBasicMaterial({ color: this.color });
+            this.mesh = new THREE.Mesh(geometry, material);
+            this.mesh.position.copy(this.position);
+            
+            // Rotate the bullet to align with its direction of travel
+            if (this.direction.x !== 0 || this.direction.z !== 0) {
+                // Calculate the angle between direction vector and the z-axis
+                this.mesh.rotation.y = Math.atan2(this.direction.x, this.direction.z);
+            }
+            
+            this.scene.add(this.mesh);
+        }
+    }
+
+    update(dt) {
+        if (!this.isActive) {
+            return;
+        }
+        
+        // If attached to an enemy, don't update position independently
+        if (this.attachedToEnemy) {
+            return;
+        }
+
+        // Move the bullet mesh
+        const moveDistance = this.speed * dt; 
+        if (isNaN(moveDistance) || moveDistance === undefined) {
+            console.error("[OptimizedBullet.update] moveDistance is NaN or undefined!", {speed: this.speed, dt: dt});
+            return;
+        }
+        
+        const moveVector = this.direction.clone().multiplyScalar(moveDistance);
+        if (isNaN(moveVector.x) || isNaN(moveVector.y) || isNaN(moveVector.z)) {
+            console.error("[OptimizedBullet.update] moveVector has NaN components!", {direction: this.direction, moveDistance: moveDistance});
+            return;
+        }
+
+        // Update position
+        this.position.add(moveVector);
+        
+        // If we have a mesh (non-instanced), update its position
+        if (this.mesh) {
+            this.mesh.position.copy(this.position);
+        }
+
+        // Check if bullet has traveled its maximum distance
+        const distanceTraveled = this.position.distanceTo(this.initialPosition);
+        
+        if (distanceTraveled >= this.maxTravelDistance) {
+            this.deactivate();
+        }
+    }
+    
+    // Called when the bullet hits an enemy
+    attachToEnemy(enemy) {
+        this.attachedToEnemy = true;
+        this.attachedEnemy = enemy;
+        
+        // Stop bullet's independent movement
+        this.speed = 0;
+    }
+    
+    // Create a decal instead of staying as a 3D object
+    createImpactDecal(position, normal, object) {
+        // If we have a decal manager, create a decal
+        if (this.decalManager) {
+            // Determine if this is a ground hit or an object hit
+            if (normal && Math.abs(normal.y) > 0.9) {
+                // Ground hit - create a ground splatter
+                this.decalManager.createGroundSplat(position, 0.7, this.color);
+            } else {
+                // Object hit - create a surface decal
+                this.decalManager.createSurfaceDecal(position, normal, object, this.color);
+            }
+        }
+        
+        // Deactivate the bullet
+        this.deactivate();
+    }
+
+    deactivate() {
+        if (!this.isActive) return;
+        this.isActive = false;
+        
+        // Only remove mesh if we're not using instanced rendering
+        if (!this.useInstance && this.mesh) {
+            this.scene.remove(this.mesh);
+            this.mesh.geometry.dispose();
+            this.mesh.material.dispose();
+            this.mesh = null; 
+        }
+    }
+    
+    getPosition() {
+        return this.position;
+    }
+    
+    getBoundingRadius() {
+        // Increase bullet collision radius to make hits easier
+        const radius = SIZES.BULLET * 3.5;
+        return radius; 
+    }
+} 

@@ -407,8 +407,8 @@ export class CollisionSystem {
                             // Gradual blending of avoidance history (strong inertia)
                             enemy.avoidanceHistory.lerp(totalMoveDirection, 0.2);
                             enemy.avoidanceHistory.normalize();
-                            
-                            if (enemy.direction) {
+                    
+                    if (enemy.direction) {
                                 // Get current direction
                                 const currentDir = enemy.direction.clone();
                                 
@@ -428,7 +428,7 @@ export class CollisionSystem {
                                     newDirection = new THREE.Vector3()
                                         .addScaledVector(totalMoveDirection, 0.5)
                                         .addScaledVector(enemy.avoidanceHistory, 0.5)
-                                        .normalize();
+                            .normalize();
                                 }
                                 
                                 // Apply smooth transition to new direction with inertia
@@ -689,7 +689,7 @@ export class CollisionSystem {
                     // Create decal with player hit normal
                     bullet.createImpactDecal(hitPos, hitPos.clone().sub(playerPos).normalize(), null);
                 } else {
-                    bullet.deactivate();
+                bullet.deactivate();
                 }
                 
                 this.player.takeDamage(20); // Each bullet deals 20 damage
@@ -753,7 +753,7 @@ export class CollisionSystem {
                         const groundPos = new THREE.Vector3(bulletPos.x, 0.01, bulletPos.z);
                         bullet.createImpactDecal(groundPos, groundNormal, null);
                     } else {
-                        bullet.deactivate();
+                    bullet.deactivate();
                     }
                 }
             }

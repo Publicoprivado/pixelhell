@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pixel Hell</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        cursor: none; /* Hide default cursor */
+      }
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      /* Crosshair styles */
+      #crosshair {
+        position: fixed;
+        width: 8px;
+        height: 8px;
+        pointer-events: none; /* Makes it click-through */
+        transform: translate(-50%, -50%);
+        z-index: 1000;
+        display: none; /* Initially hidden, will be shown after game start */
+        background-color: magenta;
+        border-radius: 50%;
+        box-shadow: 0 0 4px magenta;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Crosshair element -->
+    <div id="crosshair"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html> 

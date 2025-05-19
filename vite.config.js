@@ -1,10 +1,8 @@
-import { defineConfig } from 'vite';
-
-export default defineConfig({
+export default {
   root: '.',
   publicDir: 'public',
   base: '/pixelhell/',
   server: {
     host: true
   }
-});
+} 

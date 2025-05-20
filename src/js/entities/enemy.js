@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { COLORS, SIZES, GAME } from '../utils/constants.js';
-import { Bullet, OptimizedBullet } from './projectiles.js';
+import { Bullet, OptimizedBullet, BossBullet } from './projectiles.js';
 
 export class Enemy {
     constructor(scene, position, type = 'REGULAR', spawnManager = null) {
@@ -89,6 +89,10 @@ export class Enemy {
         
         // Add character through varied shapes based on enemy type
         switch(this.type) {
+            case 'BOSS':
+                // Boss is much larger than regular enemies
+                this.mesh.scale.set(3, 3, 3);
+                break;
             case 'CHUBBY':
                 // Wider, shorter enemy
                 this.mesh.scale.set(1.5, 0.8, 1.5);
@@ -299,9 +303,9 @@ export class Enemy {
         // Exaggerated squash and stretch - scale with movement intensity
         const baseSquashFactor = 0.5;
         const squashFactor = baseSquashFactor * movementIntensity;
-        this.mesh.scale.y = (this.type === 'THIN' ? 1.6 : (this.type === 'CHUBBY' ? 0.8 : 1)) * (1 - jumpHeight * squashFactor);
-        this.mesh.scale.x = (this.type === 'THIN' ? 0.6 : (this.type === 'CHUBBY' ? 1.5 : 1)) * (1 + jumpHeight * squashFactor * 0.5);
-        this.mesh.scale.z = (this.type === 'THIN' ? 0.6 : (this.type === 'CHUBBY' ? 1.5 : 1)) * (1 + jumpHeight * squashFactor * 0.5);
+        this.mesh.scale.y = (this.type === 'THIN' ? 1.6 : (this.type === 'CHUBBY' ? 0.8 : (this.type === 'BOSS' ? 3 : 1))) * (1 - jumpHeight * squashFactor);
+        this.mesh.scale.x = (this.type === 'THIN' ? 0.6 : (this.type === 'CHUBBY' ? 1.5 : (this.type === 'BOSS' ? 3 : 1))) * (1 + jumpHeight * squashFactor * 0.5);
+        this.mesh.scale.z = (this.type === 'THIN' ? 0.6 : (this.type === 'CHUBBY' ? 1.5 : (this.type === 'BOSS' ? 3 : 1))) * (1 + jumpHeight * squashFactor * 0.5);
         
         // Add a slight lean in the direction of movement
         if (this.velocity.x !== 0 || this.velocity.z !== 0) {
@@ -758,14 +762,17 @@ export class Enemy {
         let scaleFactor;
         
         switch(this.type) {
+            case 'BOSS':
+                // Make boss much easier to hit by increasing collision radius
+                scaleFactor = 2.0; // Increased from 1.0
+                break;
             case 'CHUBBY':
                 // Use the wider dimension for chubby enemies
                 scaleFactor = 1.5;
                 break;
             case 'THIN':
                 // Increase collision radius for thin enemies to make them easier to hit
-                // They were too hard to hit because they're thin but tall
-                scaleFactor = 1.5; // Increased from 0.8
+                scaleFactor = 1.5;
                 break;
             default: // REGULAR
                 // Use average dimension for regular enemies
@@ -773,7 +780,7 @@ export class Enemy {
         }
         
         // Increase the overall multiplier to make all enemies easier to hit
-        const radius = baseSize * scaleFactor * 1.0; // Increased from 0.75
+        const radius = baseSize * scaleFactor * 1.0;
         return radius;
     }
     
@@ -1053,6 +1060,374 @@ export class Enemy {
     }
 }
 
+export class Boss extends Enemy {
+    constructor(scene, position, spawnManager = null) {
+        // Call the Enemy constructor with the BOSS type
+        super(scene, position, 'BOSS', spawnManager);
+        
+        // Override properties specific to the boss
+        this.health = GAME.BOSS_HEALTH;
+        this.shootingCooldown = GAME.BOSS_SHOOTING_COOLDOWN;
+        this.shootingRange = 25; // Larger shooting range
+        
+        // Boss-specific properties - only use single attack
+        this.attackPattern = 'SINGLE';
+        
+        // Track shared resources for explosion effects
+        this.sharedGeometries = null;
+        this.sharedMaterials = null;
+        if (spawnManager && spawnManager.grenadePool) {
+            this.sharedGeometries = spawnManager.grenadePool.sharedGeometries;
+            this.sharedMaterials = spawnManager.grenadePool.sharedMaterials;
+        }
+        
+        // Create a crown/emblem to distinguish the boss
+        this.addBossEmblem();
+    }
+    
+    addBossEmblem() {
+        // Add a glowing effect
+        const glowGeometry = new THREE.SphereGeometry(0.4, 8, 8);
+        const glowMaterial = new THREE.MeshBasicMaterial({ 
+            color: COLORS.ENEMY.BOSS,
+            transparent: true,
+            opacity: 0.3,
+            blending: THREE.AdditiveBlending 
+        });
+        this.glow = new THREE.Mesh(glowGeometry, glowMaterial);
+        this.mesh.add(this.glow);
+        
+        // Add a point light
+        this.light = new THREE.PointLight(COLORS.ENEMY.BOSS, 0.8, 3);
+        this.light.position.y = 0.5;
+        this.mesh.add(this.light);
+    }
+    
+    update(dt, playerPosition) {
+        if (!this.isActive) return;
+        
+        // Call the parent update method
+        super.update(dt, playerPosition);
+        
+        // Update glow effect
+        if (this.glow) {
+            const pulseScale = 1 + Math.sin(this.jumpTime * 3) * 0.2;
+            this.glow.scale.set(pulseScale, pulseScale, pulseScale);
+        }
+        
+        // Update light intensity
+        if (this.light) {
+            this.light.intensity = 0.5 + Math.sin(this.jumpTime * 3) * 0.3;
+        }
+    }
+    
+    tryShoot(direction) {
+        const now = Date.now();
+        
+        // Check if enough time has passed since last shot
+        if (now - this.lastShotTime < this.shootingCooldown) return;
+        
+        // Only use single bullet attack
+        this.shootSingleBullet(direction);
+        
+        this.lastShotTime = now;
+    }
+    
+    shootSingleBullet(direction) {
+        // Create bullet position
+        const bulletPosition = this.position.clone();
+        bulletPosition.y = SIZES.PLAYER / 2;
+        
+        // Add offset in facing direction
+        const offset = direction.clone().multiplyScalar(SIZES.PLAYER + 0.5);
+        bulletPosition.add(offset);
+        
+        // Create a BossBullet with adjusted direction
+        const bullet = new BossBullet(
+            this.scene, 
+            bulletPosition, 
+            direction.clone(), 
+            1.0, 
+            this.spawnManager.decalManager,
+            this.spawnManager.audioManager
+        );
+        
+        if (this.spawnManager) {
+            this.spawnManager.addEnemyBullet(bullet);
+        }
+        
+        // Play a muzzle flash effect
+        this.createEnhancedMuzzleFlash(bulletPosition);
+    }
+    
+    createEnhancedMuzzleFlash(position, size = 0.4, color = 0xffff00) {
+        // Create a larger flash
+        const flashGeometry = new THREE.BoxGeometry(size, size, size);
+        const flashMaterial = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 1.0,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const flash = new THREE.Mesh(flashGeometry, flashMaterial);
+        flash.position.copy(position);
+        this.scene.add(flash);
+        
+        // Add an intense light
+        const light = new THREE.PointLight(color, 5, 5);
+        light.position.copy(position);
+        this.scene.add(light);
+        
+        // Animate and remove with more intense effect
+        let opacity = 1.0;
+        let scale = 1.0;
+        
+        const animateFlash = () => {
+            opacity -= 0.1;
+            scale += 0.3;
+            
+            if (opacity <= 0) {
+                this.scene.remove(flash);
+                this.scene.remove(light);
+                flashMaterial.dispose();
+                flashGeometry.dispose();
+                return;
+            }
+            
+            flashMaterial.opacity = opacity;
+            flash.scale.set(scale, scale, scale);
+            light.intensity = opacity * 5;
+            
+            requestAnimationFrame(animateFlash);
+        };
+        
+        animateFlash();
+    }
+    
+    die() {
+        if (!this.isActive) return;
+        
+        // Create a single dramatic expanding sphere blast
+        this.createBossDeathBlast();
+        
+        // Show a "Boss Defeated" message
+        this.showBossDefeatedMessage();
+        
+        // Call the parent die method
+        super.die();
+    }
+    
+    createBossDeathBlast() {
+        // Create a single expanding sphere blast
+        const blastGeometry = this.sharedGeometries ? 
+            this.sharedGeometries.particle : 
+            new THREE.SphereGeometry(0.1, 16, 16); // Reduced from 32,32 to 16,16
+        
+        const blastMaterial = new THREE.MeshBasicMaterial({
+            color: COLORS.ENEMY.BOSS,
+            transparent: true,
+            opacity: 1.0,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const blast = new THREE.Mesh(blastGeometry, blastMaterial);
+        blast.position.copy(this.position);
+        this.scene.add(blast);
+        
+        // Add a bright point light for the blast
+        const blastLight = new THREE.PointLight(COLORS.ENEMY.BOSS, 8, 10);
+        blastLight.position.copy(this.position);
+        this.scene.add(blastLight);
+        
+        // Create debris pieces
+        const debrisCount = 4; // Just a few pieces like grenade
+        const debrisPieces = [];
+        
+        // Get appropriate debris geometries
+        const debrisGeometries = this.sharedGeometries ? this.sharedGeometries.debris : null;
+        const geometryOptions = debrisGeometries ? 
+            Object.values(debrisGeometries) : 
+            [new THREE.DodecahedronGeometry(0.2, 0)];
+        
+        for (let i = 0; i < debrisCount; i++) {
+            // Use shared geometries if available, otherwise create a new one
+            const geometry = geometryOptions[Math.floor(Math.random() * geometryOptions.length)];
+            
+            const debrisMaterial = new THREE.MeshBasicMaterial({
+                color: COLORS.ENEMY.BOSS,
+                transparent: true,
+                opacity: 0.9
+            });
+            
+            const debris = new THREE.Mesh(geometry, debrisMaterial);
+            debris.position.copy(this.position);
+            
+            // Random initial rotation
+            debris.rotation.set(
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2
+            );
+            
+            // Random velocity and rotation speed
+            debris.userData = {
+                velocity: new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.2, // Less spread
+                    Math.random() * 0.3 + 0.2,   // Less upward velocity
+                    (Math.random() - 0.5) * 0.2
+                ),
+                rotationSpeed: new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.1, // Slower rotation
+                    (Math.random() - 0.5) * 0.1,
+                    (Math.random() - 0.5) * 0.1
+                ),
+                gravity: 0.01,
+                bounceCount: 0,
+                maxBounces: 1 // Just one bounce like grenade
+            };
+            
+            this.scene.add(debris);
+            debrisPieces.push(debris);
+        }
+        
+        // Animate the blast and debris
+        let time = 0;
+        const blastDuration = 1000; // ms
+        let lastTime = performance.now();
+        let animationId;
+        
+        const animateBlast = () => {
+            const now = performance.now();
+            const deltaTime = Math.min(now - lastTime, 33); // Cap at ~30fps for performance
+            lastTime = now;
+            
+            time += deltaTime;
+            const progress = time / blastDuration;
+            
+            if (progress < 1) {
+                // Animate expanding sphere with easing
+                const easeOut = 1 - Math.pow(1 - progress, 3); // Cubic ease out
+                const scale = 1 + easeOut * 2; // Smaller expansion like grenade
+                blast.scale.set(scale, scale, scale);
+                
+                // Fade out with a slight delay
+                const fadeStart = 0.3; // Start fading after 30% of the animation
+                const fadeProgress = Math.max(0, (progress - fadeStart) / (1 - fadeStart));
+                blastMaterial.opacity = 1.0 * (1 - fadeProgress);
+                blastLight.intensity = 8 * (1 - fadeProgress);
+                
+                // Update debris
+                debrisPieces.forEach(debris => {
+                    // Apply gravity
+                    debris.userData.velocity.y -= debris.userData.gravity;
+                    
+                    // Update position
+                    debris.position.add(debris.userData.velocity);
+                    
+                    // Update rotation
+                    debris.rotation.x += debris.userData.rotationSpeed.x;
+                    debris.rotation.y += debris.userData.rotationSpeed.y;
+                    debris.rotation.z += debris.userData.rotationSpeed.z;
+                    
+                    // Floor collision
+                    if (debris.position.y < 0.2 && debris.userData.velocity.y < 0) {
+                        debris.position.y = 0.2;
+                        debris.userData.velocity.y = Math.abs(debris.userData.velocity.y) * 0.5;
+                        debris.userData.bounceCount++;
+                        
+                        // Slow down horizontal movement on bounce
+                        debris.userData.velocity.x *= 0.8;
+                        debris.userData.velocity.z *= 0.8;
+                        
+                        // Stop bouncing after max bounces
+                        if (debris.userData.bounceCount >= debris.userData.maxBounces) {
+                            debris.userData.velocity.y = 0;
+                        }
+                    }
+                    
+                    // Fade out debris
+                    debris.material.opacity = 0.9 * (1 - fadeProgress);
+                });
+                
+                animationId = requestAnimationFrame(animateBlast);
+            } else {
+                // Clean up
+                this.scene.remove(blast);
+                this.scene.remove(blastLight);
+                
+                // Only dispose if not using shared geometries
+                if (!this.sharedGeometries) {
+                    blastGeometry.dispose();
+                }
+                blastMaterial.dispose();
+                
+                // Clean up debris
+                debrisPieces.forEach(debris => {
+                    this.scene.remove(debris);
+                    debris.geometry.dispose();
+                    debris.material.dispose();
+                });
+                
+                // Cancel animation frame if needed
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                }
+            }
+        };
+        
+        animationId = requestAnimationFrame(animateBlast);
+    }
+    
+    showBossDefeatedMessage() {
+        // Create a message element
+        const message = document.createElement('div');
+        message.textContent = 'BOSS DEFEATED!';
+        message.style.position = 'fixed';
+        message.style.top = '50%';
+        message.style.left = '50%';
+        message.style.transform = 'translate(-50%, -50%)';
+        message.style.color = '#ffaa00';
+        message.style.fontSize = '48px';
+        message.style.fontFamily = '"Press Start 2P", cursive';
+        message.style.textShadow = '0 0 10px #880088, 0 0 20px #880088';
+        message.style.zIndex = '1000';
+        message.style.opacity = '0';
+        message.style.transition = 'opacity 0.5s ease-in-out';
+        
+        document.body.appendChild(message);
+        
+        // Fade in
+        setTimeout(() => {
+            message.style.opacity = '1';
+        }, 100);
+        
+        // Remove after a few seconds
+        setTimeout(() => {
+            message.style.opacity = '0';
+            setTimeout(() => {
+                document.body.removeChild(message);
+            }, 500);
+        }, 3000);
+    }
+    
+    // Override reset method to properly handle boss-specific properties
+    reset(position) {
+        // Call parent reset method with BOSS type
+        super.reset(position, 'BOSS');
+        
+        // Reset boss-specific properties
+        this.health = GAME.BOSS_HEALTH;
+        this.shootingCooldown = GAME.BOSS_SHOOTING_COOLDOWN;
+        this.attackPattern = 'SINGLE';
+        
+        // Add back the boss emblem
+        this.addBossEmblem();
+        
+        return this;
+    }
+}
+
 export class EnemyPool {
     constructor(scene, spawnManager) {
         this.scene = scene;
@@ -1090,7 +1465,7 @@ export class EnemyPool {
         // If no enemy is available, create a new one or grow the pool
         if (!enemy) {
             if (this.pool.length + this.activeEnemies.length < 50) { // Cap at 50 total enemies
-                console.log("Creating new enemy, pool exhausted");
+
                 enemy = new Enemy(this.scene, position, type, this.spawnManager);
             } else {
                 // Take the oldest enemy from active enemies

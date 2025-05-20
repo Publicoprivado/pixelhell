@@ -169,8 +169,8 @@ export class AmmoPack {
         const bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xffcc00 }); // Gold color
         
         // Scale number of visible bullets based on ammo amount
-        // At 60 ammo show 4 bullets, at 30 ammo show 2 bullets
-        const numBullets = Math.max(2, Math.floor(this.ammoAmount / 15));
+        // Use a sliding scale: more ammo = more visible bullets, capped between 2-8
+        const numBullets = Math.max(2, Math.min(8, Math.floor(this.ammoAmount / 15)));
         
         // Arrange bullets in a grid or line based on count
         if (numBullets <= 3) {

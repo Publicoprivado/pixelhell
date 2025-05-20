@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Enemy, EnemyPool } from '../entities/enemy.js';
+import { Enemy, EnemyPool, Boss } from '../entities/enemy.js';
 import { AmmoPack, EnergyPack } from '../entities/environment.js';
 import { GAME, COLORS } from '../utils/constants.js';
 import { TextLabel } from '../utils/text-label.js';
@@ -28,11 +28,20 @@ export class SpawnManager {
         this.enemyFireRateMultiplier = 1.0; // Base fire rate multiplier for wave 1
         this.enemiesSpawnedThisWave = 0; // Track how many enemies have been spawned in current wave
         this.waveComplete = false; // Flag to track if wave is complete
-        this.ammoPerPickup = 60; // Starting ammo per pickup
+        this.ammoPerPickup = 70; // Starting ammo per pickup for wave 1
         
         // Initialize object pools
         this.enemyPool = new EnemyPool(scene, this);
         this.grenadePool = new GrenadePool(scene, audioManager, decalManager);
+        
+        // Increase grenade pool size to handle more grenades when boss is around
+        this.grenadePool.poolSize = 10;
+        
+        // Add boss tracking
+        this.bossSpawned = false;
+        this.bossDefeated = true; // Start with no boss
+        this.currentBoss = null; // Track the current boss instance
+        this.hasSpawnedBossThisWave = false; // Track if we've already spawned a boss this wave
     }
     
     setObstacles(obstacles) {
@@ -111,6 +120,44 @@ export class SpawnManager {
                 this.startNextWave();
             }, 2000);
         }
+        
+        // Check if we should spawn a boss (when 70% of the wave is defeated)
+        const enemiesDefeated = this.enemiesSpawnedThisWave - this.activeEnemies.length;
+        
+        // Hardcoded defeat thresholds for each wave
+        const defeatThresholds = {
+            1: -1,     // No boss in wave 1 (using -1 to ensure it never triggers)
+            2: -1,     // No boss in wave 2 (using -1 to ensure it never triggers)
+            3: 17,     // 70% of 24 enemies
+            4: 22,     // 70% of 32 enemies
+            5: 28,     // 70% of 40 enemies
+            6: 34,     // 70% of 48 enemies
+            7: 39,     // 70% of 56 enemies
+            8: 45,     // 70% of 64 enemies
+            9: 50,     // 70% of 72 enemies
+            10: 56     // 70% of 80 enemies
+        };
+        
+        // Get the threshold for current wave, default to 70% calculation for waves beyond 10
+        const defeatThreshold = this.waveNumber <= 10 ? 
+            defeatThresholds[this.waveNumber] : 
+            Math.floor(this.maxEnemies * 0.7);
+        
+        // Only spawn boss if:
+        // 1. Wave is 3 or higher
+        // 2. No boss is currently spawned or active
+        // 3. We've reached the defeat threshold
+        // 4. We haven't already spawned a boss this wave
+        // 5. We've spawned at least 50% of the wave's enemies
+        if (this.waveNumber >= 3 && 
+            !this.bossSpawned && 
+            !this.currentBoss && 
+            this.bossDefeated && 
+            enemiesDefeated >= defeatThreshold && 
+            !this.hasSpawnedBossThisWave &&
+            this.enemiesSpawnedThisWave >= this.maxEnemies * 0.5) {
+            this.spawnBoss();
+        }
     }
     
     updateEnemies(dt) {
@@ -133,6 +180,11 @@ export class SpawnManager {
         this.enemyBullets.push(bullet);
         // Add to collision system for player damage
         this.collisionSystem.addEnemyBullet(bullet);
+        
+        // If this is a boss bullet, share the grenade pool's resources with it
+        if (bullet.constructor.name === "BossBullet" && this.grenadePool) {
+            bullet.setSharedResources(this.grenadePool.sharedGeometries, this.grenadePool.sharedMaterials);
+        }
     }
     
     spawnEnemy() {
@@ -301,36 +353,50 @@ export class SpawnManager {
     enemyDefeated() {
         this.enemyCount--;
         
-        // The wave completion check is now handled in the update method
+        // Check if any of the defeated enemies were a boss
+        this.activeEnemies.forEach(enemy => {
+            if (enemy instanceof Boss && !enemy.isActive) {
+                this.bossDefeated = true; // Set to true when boss is defeated
+                this.bossSpawned = false;
+                this.currentBoss = null;
+                // Drop extra pickups when a boss is defeated
+                this.spawnBossRewards(enemy.getPosition());
+            }
+        });
     }
     
     startNextWave() {
         this.waveNumber++;
-        
-        // Increase enemy count by 20% each wave (rounded up)
-        const baseEnemies = 8; // Wave 1 has 8 enemies
-        this.maxEnemies = Math.ceil(baseEnemies * Math.pow(1.2, this.waveNumber - 1));
-        
-        // Increase enemy speed by 10% per wave
-        this.enemySpeedMultiplier = 1.0 + (this.waveNumber - 1) * 0.1;
-        
-        // Increase enemy fire rate by 15% per wave
-        this.enemyFireRateMultiplier = 1.0 + (this.waveNumber - 1) * 0.15;
-        
-        // Speed up spawn rate slightly (cap at 300ms minimum)
-        this.spawnDelay = Math.max(300, GAME.SPAWN_DELAY - (this.waveNumber * 100));
-        
-        // Reduce ammo per pickup amount by 10 for each wave until it reaches 30
-        this.ammoPerPickup = Math.max(30, 60 - ((this.waveNumber - 1) * 10));
-        
-        // Reset counters for the new wave
+        this.enemyCount = 0;
         this.enemiesSpawnedThisWave = 0;
+        this.maxEnemies = this.waveNumber * 8; // Increase enemies per wave
         this.waveComplete = false;
         
-        // Display wave announcement with additional info
-        this.showWaveMessage();
+        // Reset boss tracking for the new wave
+        this.bossSpawned = false;
+        this.bossDefeated = true; // Reset to true so a new boss can spawn
+        this.currentBoss = null;
+        this.hasSpawnedBossThisWave = false; // Reset the boss spawn flag for new wave
         
-        console.log(`Wave ${this.waveNumber}: ${this.maxEnemies} enemies, speed x${this.enemySpeedMultiplier.toFixed(1)}, fire rate x${this.enemyFireRateMultiplier.toFixed(1)}, ammo per pickup: ${this.ammoPerPickup}`);
+        // Increase enemy speed and fire rate for progressive difficulty
+        this.enemySpeedMultiplier = 1.0 + (this.waveNumber - 1) * 0.1; // 10% increase per wave
+        this.enemyFireRateMultiplier = 1.0 + (this.waveNumber - 1) * 0.05; // 5% increase per wave
+        
+        // Set ammo per pickup based on wave number to create increasing scarcity
+        if (this.waveNumber === 1) {
+            this.ammoPerPickup = 70;
+        } else if (this.waveNumber === 2) {
+            this.ammoPerPickup = 60;
+        } else if (this.waveNumber === 3) {
+            this.ammoPerPickup = 50;
+        } else if (this.waveNumber === 4) {
+            this.ammoPerPickup = 40;
+        } else {
+            this.ammoPerPickup = 30; // Wave 5 and beyond get 30 ammo
+        }
+        
+        // Show message
+        this.showWaveMessage();
     }
     
     showWaveMessage() {
@@ -462,6 +528,118 @@ export class SpawnManager {
         this.grenadePickups = [];
         this.activeEnemies = [];
         this.enemyBullets = [];
+    }
+    
+    spawnBoss() {
+
+        this.bossSpawned = true;
+        this.bossDefeated = false; // Set to false while boss is active
+        this.hasSpawnedBossThisWave = true; // Mark that we've spawned a boss this wave
+        
+        // Get a spawn position far from the player
+        const position = this.getBossSpawnPosition();
+        
+        // Create the boss
+        const boss = new Boss(this.scene, position, this);
+        this.currentBoss = boss;
+        
+        // Add to active enemies and collision system
+        this.activeEnemies.push(boss);
+        this.collisionSystem.addEnemy(boss);
+        
+        // Show boss entrance message
+        this.showBossEntranceMessage();
+        
+        // Play boss spawn sound
+        this.audioManager.playGrenadeExplosion();
+        
+        return boss;
+    }
+    
+    getBossSpawnPosition() {
+        // Always spawn boss at the farthest arena edge from player
+        const playerPos = this.player.getPosition();
+        const halfSize = GAME.ARENA_SIZE / 2 - 2; // Keep a bit away from the edge
+        
+        // Find the farthest corner
+        const corners = [
+            new THREE.Vector3(halfSize, 0, halfSize),
+            new THREE.Vector3(halfSize, 0, -halfSize),
+            new THREE.Vector3(-halfSize, 0, halfSize),
+            new THREE.Vector3(-halfSize, 0, -halfSize)
+        ];
+        
+        let farthestCorner = corners[0];
+        let maxDistance = playerPos.distanceTo(corners[0]);
+        
+        for (let i = 1; i < corners.length; i++) {
+            const distance = playerPos.distanceTo(corners[i]);
+            if (distance > maxDistance) {
+                maxDistance = distance;
+                farthestCorner = corners[i];
+            }
+        }
+        
+        return farthestCorner;
+    }
+    
+    showBossEntranceMessage() {
+        // Create a message element
+        const message = document.createElement('div');
+        message.textContent = 'BOSS APPROACHING!';
+        message.style.position = 'fixed';
+        message.style.top = '20%';  // Changed from 50% to 20% to position above HUD
+        message.style.left = '50%';
+        message.style.transform = 'translate(-50%, -50%)';
+        message.style.color = '#ff0000';
+        message.style.fontSize = '48px';
+        message.style.fontFamily = '"Press Start 2P", cursive';
+        message.style.textShadow = '0 0 10px #880088, 0 0 20px #880088';
+        message.style.zIndex = '1000';
+        message.style.opacity = '0';
+        message.style.transition = 'opacity 0.5s ease-in-out';
+        
+        document.body.appendChild(message);
+        
+        // Fade in
+        setTimeout(() => {
+            message.style.opacity = '1';
+        }, 100);
+        
+        // Remove after a few seconds
+        setTimeout(() => {
+            message.style.opacity = '0';
+            setTimeout(() => {
+                document.body.removeChild(message);
+            }, 500);
+        }, 3000);
+    }
+    
+    spawnBossRewards(position) {
+        // Spawn multiple pickups around the boss position
+        for (let i = 0; i < 3; i++) {
+            // Random position close to where the boss was defeated
+            const offset = new THREE.Vector3(
+                (Math.random() - 0.5) * 4,
+                0,
+                (Math.random() - 0.5) * 4
+            );
+            const pickupPos = position.clone().add(offset);
+            
+            // Randomly choose pickup type
+            const pickupType = Math.floor(Math.random() * 3);
+            switch (pickupType) {
+                case 0:
+                    this.spawnAmmoPack(pickupPos);
+                    break;
+                case 1:
+                    this.spawnEnergyPack(pickupPos);
+                    break;
+                case 2:
+                    this.spawnGrenadePack(pickupPos);
+                    break;
+            }
+        }
     }
 }
 

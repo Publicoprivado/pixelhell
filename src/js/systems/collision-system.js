@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { GAME } from '../utils/constants.js';
+import { SIZES, GAME } from '../utils/constants.js';
+import { BossBullet } from '../entities/projectiles.js';
 
 export class CollisionSystem {
     constructor() {
@@ -520,13 +521,64 @@ export class CollisionSystem {
             bulletsToCheck = bulletsToCheck.concat(this.bulletManager.activeBullets);
         }
         
-        
         bulletsToCheck.forEach(bullet => {
             if (!bullet.isActive || bullet.attachedToEnemy) return;
             
             const bulletPos = bullet.getPosition();
             const bulletRadius = bullet.getBoundingRadius();
-            
+
+            // Check if the bullet is a boss bullet that has exploded
+            const isBossBullet = bullet instanceof BossBullet;
+            if (isBossBullet && bullet.hasExploded && bullet.explosionActive) {
+                const explosionRadius = bullet.getExplosionRadius();
+                
+                // Check collisions with enemies
+                this.enemies.forEach(enemy => {
+                    if (!enemy.isActive) return;
+                    
+                    const enemyPos = enemy.getPosition();
+                    const distance = bulletPos.distanceTo(enemyPos);
+                    
+                    if (distance < explosionRadius) {
+                        // Calculate damage based on distance from explosion center
+                        const damageMultiplier = 1 - (distance / explosionRadius);
+                        const damageAmount = Math.ceil(GAME.BOSS_BULLET_DAMAGE * damageMultiplier);
+                        
+                        enemy.takeDamage(damageAmount);
+                        
+                        // Add knockback effect
+                        const knockbackDirection = new THREE.Vector3()
+                            .subVectors(enemyPos, bulletPos)
+                            .normalize();
+                        
+                        // Calculate strength based on distance (closer = stronger force)
+                        const knockbackStrength = (explosionRadius - distance) / explosionRadius * 8;
+                        
+                        // Apply knockback if the enemy supports it
+                        if (typeof enemy.blowAway === 'function') {
+                            enemy.blowAway(knockbackDirection, knockbackStrength);
+                        }
+                    }
+                });
+                
+                // Check if player is in explosion radius
+                if (this.player) {
+                    const playerPos = this.player.getPosition();
+                    const distance = bulletPos.distanceTo(playerPos);
+                    
+                    if (distance < explosionRadius) {
+                        // Calculate damage based on distance
+                        const damageMultiplier = 0.5 * (1 - (distance / explosionRadius));
+                        const damageAmount = Math.ceil(GAME.BOSS_BULLET_DAMAGE * damageMultiplier);
+                        
+                        // Apply damage to player
+                        this.player.takeDamage(damageAmount);
+                    }
+                }
+                
+                return; // Skip the normal bullet collision checks for exploding bullets
+            }
+
             // Check collisions with obstacles
             for (const obstacle of this.obstacles) {
                 // Skip grass obstacles
@@ -538,8 +590,13 @@ export class CollisionSystem {
                 const bulletSphere = new THREE.Sphere(bulletPos, bulletRadius);
                 
                 if (obstacleBox.intersectsSphere(bulletSphere)) {
-                    // If this is an OptimizedBullet, create a decal instead of just deactivating
-                    if (bullet.constructor.name === "OptimizedBullet" && typeof bullet.createImpactDecal === 'function') {
+                    // If this is a BossBullet, create explosion effect
+                    if (isBossBullet && typeof bullet.createImpactDecal === 'function') {
+                        // Calculate impact position and normal
+                        const obstaclePos = obstacle.getPosition();
+                        const normal = new THREE.Vector3().subVectors(bulletPos, obstaclePos).normalize();
+                        bullet.createImpactDecal(bulletPos, normal, obstacle);
+                    } else if (bullet.constructor.name === "OptimizedBullet" && typeof bullet.createImpactDecal === 'function') {
                         // Calculate impact position and normal
                         const obstaclePos = obstacle.getPosition();
                         const normal = new THREE.Vector3().subVectors(bulletPos, obstaclePos).normalize();
@@ -547,24 +604,29 @@ export class CollisionSystem {
                     } else {
                         bullet.deactivate();
                     }
-                    break;
+                    return;
                 }
             }
             
             // Check ground collision
             if (bullet.isActive && bulletPos.y <= bulletRadius && bullet.direction.y <= 0) {
-                // We'll only create a ground decal if the bullet is genuinely hitting the ground (not just spawning near it)
-                // Calculate vertical travel - did the bullet actually travel downward or was it just spawned close to the ground?
-                const verticalTravel = bullet.initialPosition.y - bulletPos.y;
+                // For ground collisions, only create splats after traveling some distance
+                const distanceTraveled = bullet.position.distanceTo(bullet.initialPosition || bullet.position.clone());
                 
-                // Only consider it a ground hit if it's fallen a bit or traveled a significant distance
-                const distanceTraveled = bullet.position.distanceTo(bullet.initialPosition);
-                
-                // Use a fraction of max distance as threshold for creating splats
+                // Use the same formula as player bullets for splat distance threshold
                 const splatThreshold = GAME.BULLET_MAX_DISTANCE * 0.1;
-                if (verticalTravel > 0.1 || distanceTraveled > splatThreshold) {
+                
+                if (distanceTraveled > splatThreshold) {
+                    // If this is a BossBullet, create explosion effect
+                    if (isBossBullet && typeof bullet.createImpactDecal === 'function') {
+                        // Ground normal is always up
+                        const groundNormal = new THREE.Vector3(0, 1, 0);
+                        // Position at ground level
+                        const groundPos = new THREE.Vector3(bulletPos.x, 0.01, bulletPos.z);
+                        bullet.createImpactDecal(groundPos, groundNormal, null);
+                    } 
                     // If this is an OptimizedBullet, create a ground decal
-                    if (bullet.constructor.name === "OptimizedBullet" && typeof bullet.createImpactDecal === 'function') {
+                    else if (bullet.constructor.name === "OptimizedBullet" && typeof bullet.createImpactDecal === 'function') {
                         // Ground normal is always up
                         const groundNormal = new THREE.Vector3(0, 1, 0);
                         // Position at ground level
@@ -671,6 +733,32 @@ export class CollisionSystem {
             const bulletPos = bullet.getPosition();
             const bulletRadius = bullet.getBoundingRadius();
             
+            // Check if the bullet is a boss bullet
+            const isBossBullet = bullet instanceof BossBullet;
+            if (isBossBullet) {
+                console.log("CollisionSystem: Processing boss bullet at", bulletPos.clone());
+            }
+            
+            // Check if the bullet is a boss bullet that has exploded
+            if (isBossBullet && bullet.hasExploded && bullet.explosionActive) {
+                console.log("CollisionSystem: Active boss bullet explosion at", bulletPos.clone());
+                const explosionRadius = bullet.getExplosionRadius();
+                
+                // Check if player is in explosion radius
+                const distance = bulletPos.distanceTo(playerPos);
+                
+                if (distance < explosionRadius) {
+                    // Calculate damage based on distance
+                    const damageMultiplier = 0.5 * (1 - (distance / explosionRadius));
+                    const damageAmount = Math.ceil(GAME.BOSS_BULLET_DAMAGE * damageMultiplier);
+                    
+                    // Apply damage to player
+                    this.player.takeDamage(damageAmount);
+                }
+                
+                return; // Skip the normal bullet collision checks for exploding bullets
+            }
+            
             // Check collision with player
             const distance = bulletPos.distanceTo(playerPos);
             if (distance < bulletRadius + playerRadius) {
@@ -716,14 +804,22 @@ export class CollisionSystem {
             // Check ground collision
             if (bullet.isActive && bulletPos.y <= bulletRadius && bullet.direction.y <= 0) {
                 // For ground collisions, only create splats after traveling some distance
-                const distanceTraveled = bullet.position.distanceTo(bullet.initialPosition);
+                const distanceTraveled = bullet.position.distanceTo(bullet.initialPosition || bullet.position.clone());
                 
                 // Use the same formula as player bullets for splat distance threshold
                 const splatThreshold = GAME.BULLET_MAX_DISTANCE * 0.1;
                 
                 if (distanceTraveled > splatThreshold) {
+                    // If this is a BossBullet, create explosion effect
+                    if (isBossBullet && typeof bullet.createImpactDecal === 'function') {
+                        // Ground normal is always up
+                        const groundNormal = new THREE.Vector3(0, 1, 0);
+                        // Position at ground level
+                        const groundPos = new THREE.Vector3(bulletPos.x, 0.01, bulletPos.z);
+                        bullet.createImpactDecal(groundPos, groundNormal, null);
+                    } 
                     // If this is an OptimizedBullet, create a ground decal
-                    if (bullet.constructor.name === "OptimizedBullet" && typeof bullet.createImpactDecal === 'function') {
+                    else if (bullet.constructor.name === "OptimizedBullet" && typeof bullet.createImpactDecal === 'function') {
                         // Ground normal is always up
                         const groundNormal = new THREE.Vector3(0, 1, 0);
                         // Position at ground level

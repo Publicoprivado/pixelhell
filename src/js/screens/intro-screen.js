@@ -2,6 +2,9 @@ import * as Tone from 'tone';
 
 export class IntroScreen {
     constructor() {
+        // Show cursor on intro screen
+        document.body.style.cursor = 'default';
+        
         this.container = document.createElement('div');
         this.container.style.position = 'absolute';
         this.container.style.top = '0';
@@ -164,8 +167,17 @@ export class IntroScreen {
     }
     
     setStartCallback(callback) {
+        let isStarting = false; // Add flag to prevent multiple clicks
+        
         this.startButton.onclick = async () => {
+            // Prevent multiple clicks
+            if (isStarting) return;
+            isStarting = true;
+            
             try {
+                // Hide cursor when game starts
+                document.body.style.cursor = 'none';
+                
                 // Start audio context
                 await Tone.start();
                 
@@ -220,27 +232,15 @@ export class IntroScreen {
                             velocity += gravity;
                             player.group.position.y -= velocity;
                             
-                            // Check for ground collision
                             if (player.group.position.y <= 0 && !isGrounded) {
                                 // Bounce effect
-                                player.group.position.y = 0;
                                 velocity = -velocity * bounceCoefficient;
-                                
-                                // Flatten a bit on impact
-                                player.group.scale.set(1.2, 0.8, 1.2);
-                                setTimeout(() => {
-                                    player.group.scale.set(1, 1, 1);
-                                }, 100);
-                                
-                                // Play a landing sound
-                                const landingSound = new Tone.Synth({
-                                    oscillator: { type: "square" },
-                                    envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 }
-                                }).toDestination();
-                                landingSound.volume.value = -10;
-                                landingSound.triggerAttackRelease(240 - (bounceCount * 40), "16n");
-                                
                                 bounceCount++;
+                                
+                                // Play bounce sound
+                                if (window.gameInstance.audioManager) {
+                                    window.gameInstance.audioManager.playGrenadeBounce();
+                                }
                                 
                                 // Stop bouncing after a few bounces
                                 if (bounceCount >= maxBounces || Math.abs(velocity) < 0.3) {
@@ -267,7 +267,6 @@ export class IntroScreen {
                                                 // Play a short ascending arpeggio
                                                 readySound.triggerAttackRelease("C4", "16n");
                                                 setTimeout(() => readySound.triggerAttackRelease("E4", "16n"), 100);
-                                                setTimeout(() => readySound.triggerAttackRelease("G4", "16n"), 200);
                                                 setTimeout(() => readySound.triggerAttackRelease("C5", "8n"), 300);
                                             }, 300);
                                         }, 100);
@@ -287,7 +286,8 @@ export class IntroScreen {
                     }
                 }, 500);
             } catch (error) {
-                console.error("Error starting game:", error);
+                console.error('Error starting game:', error);
+                isStarting = false; // Reset flag if there's an error
             }
         };
     }

@@ -602,16 +602,13 @@ export class Player {
     
     throwGrenade() {
         if (this.isReloading || this.grenades <= 0) {
-            console.log("Can't throw grenade:", this.isReloading ? "reloading" : "no grenades left");
+
             return false;
         }
-        
-        console.log("Throwing grenade, count before:", this.grenades);
         
         // Reduce grenade count
         this.grenades--;
         
-        console.log("Grenade count after:", this.grenades);
         
         // Set the last grenade time to current time
         this.lastGrenadeTime = Date.now();

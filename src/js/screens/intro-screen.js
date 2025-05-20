@@ -4,6 +4,7 @@ export class IntroScreen {
     constructor() {
         // Show cursor on intro screen
         document.body.style.cursor = 'default';
+        document.body.style.backgroundColor = '#222222'; // Set body background to match game
         
         this.container = document.createElement('div');
         this.container.style.position = 'absolute';
@@ -11,7 +12,7 @@ export class IntroScreen {
         this.container.style.left = '0';
         this.container.style.width = '100%';
         this.container.style.height = '100%';
-        this.container.style.backgroundColor = 'black';
+        this.container.style.backgroundColor = '#222222';
         this.container.style.display = 'flex';
         this.container.style.flexDirection = 'column';
         this.container.style.alignItems = 'center';
@@ -199,9 +200,9 @@ export class IntroScreen {
                 setTimeout(() => synth.triggerAttackRelease("E4", "8n"), 150);
                 setTimeout(() => synth.triggerAttackRelease("G4", "8n"), 300);
                 
-                // Fade out intro screen
+                // Fade out intro screen with a smoother transition
+                this.container.style.transition = 'opacity 0.3s ease-out';
                 this.container.style.opacity = '0';
-                this.container.style.transition = 'opacity 0.5s ease-out';
                 
                 setTimeout(() => {
                     this.container.remove();

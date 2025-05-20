@@ -374,7 +374,7 @@ export class Player {
         this.group.position.add(totalVelocity);
         
         // Decay recoil velocit3
-        this.recoilVelocity.multiplyScalar(0.3); // Reduce recoil by 10% each frame
+        this.recoilVelocity.multiplyScalar(0.05); // Reduce recoil by 10% each frame
         
         // Constrain to arena
         const halfSize = GAME.ARENA_SIZE / 2;

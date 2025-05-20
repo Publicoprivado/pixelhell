@@ -288,6 +288,43 @@ export class AudioManager {
         this.playSound('GRENADE_BOUNCE', randomPitch);
     }
     
+    // Pre-create synths for better performance
+    setupExplosionSynths() {
+        if (!this.explosionSynths) {
+            // Main explosion synth - reused for multiple parts of the explosion
+            this.explosionSynths = {
+                // Base boom for low frequencies
+                baseBoom: new Tone.Synth({
+                    oscillator: {
+                        type: 'square8',
+                        width: 0.5
+                    },
+                    envelope: {
+                        attack: 0.001,
+                        decay: 0.2,
+                        sustain: 0.1,
+                        release: 0.3
+                    }
+                }).toDestination(),
+                
+                // Debris synth for higher frequencies
+                debris: new Tone.Synth({
+                    oscillator: {
+                        type: 'square4',
+                        width: 0.3
+                    },
+                    envelope: {
+                        attack: 0.001,
+                        decay: 0.15,
+                        sustain: 0,
+                        release: 0.2
+                    }
+                }).toDestination()
+            };
+        }
+        return this.explosionSynths;
+    }
+    
     playGrenadeExplosion() {
         try {
             // Make sure audio context is running
@@ -296,130 +333,62 @@ export class AudioManager {
                 Tone.context.resume();
             }
             
-            // Create a more punchy, dry explosion sound
-            const baseBoom = new Tone.Synth({
-                oscillator: {
-                    type: 'square8',
-                    width: 0.5  // Reduced width for tighter sound
-                },
-                envelope: {
-                    attack: 0.001,
-                    decay: 0.2,    // Shorter decay
-                    sustain: 0.1,  // Lower sustain
-                    release: 0.3   // Much shorter release
-                }
-            }).toDestination();
+            // Get or create explosion synths
+            const synths = this.setupExplosionSynths();
+            const { baseBoom, debris } = synths;
             
-            // Higher frequencies explosion synth
-            const debrisSynth = new Tone.Synth({
-                oscillator: {
-                    type: 'square4',
-                    width: 0.3  // Tighter width
-                },
-                envelope: {
-                    attack: 0.001,
-                    decay: 0.15,   // Shorter decay
-                    sustain: 0,
-                    release: 0.2    // Shorter release
-                }
-            }).toDestination();
+            // Reuse the same synths with different settings
             
-            // Create distortion synth for noise component
-            const noiseSynth = new Tone.Synth({
-                oscillator: {
-                    type: 'square8',
-                    width: 0.4  // Tighter width
-                },
-                envelope: {
-                    attack: 0.001,
-                    decay: 0.2,    // Shorter decay
-                    sustain: 0.1,
-                    release: 0.3    // Shorter release
-                }
-            }).toDestination();
+            // Set initial volumes
+            baseBoom.volume.value = -5;
+            debris.volume.value = -8;
             
-            // Add a sharp initial impact sound
-            const impactSynth = new Tone.Synth({
-                oscillator: {
-                    type: 'square',
-                    width: 0.2  // Very tight for punch
-                },
-                envelope: {
-                    attack: 0.001,
-                    decay: 0.05,   // Very short decay
-                    sustain: 0,
-                    release: 0.05   // Very short release
-                }
-            }).toDestination();
+            // Random notes for debris
+            const randomNotes = ['C2', 'D2', 'E2', 'G2'];
+            const getRandomNote = () => randomNotes[Math.floor(Math.random() * randomNotes.length)];
             
-            // Set volumes - adjusted for better balance
-            baseBoom.volume.value = -5;    // Reduced from 0
-            debrisSynth.volume.value = -8;  // Reduced from -5
-            noiseSynth.volume.value = -10;  // Reduced from -8
-            impactSynth.volume.value = -3;  // Slightly louder for punch
+            // Play initial explosion sounds
+            baseBoom.triggerAttackRelease('A0', '16n');
             
-            // Initial impact sound
-            impactSynth.triggerAttackRelease('C2', '32n');
+            // Schedule debris sounds with a single setTimeout for efficiency
+            const now = Tone.now();
             
-            // Play initial deeper boom
-            baseBoom.triggerAttackRelease('A0', '16n');  // Shorter duration
+            // Instead of nested timeouts, schedule everything at once with precise timing
+            debris.triggerAttackRelease('D2', '32n', now + 0.025);
+            debris.triggerAttackRelease(getRandomNote(), '32n', now + 0.05);
+            baseBoom.triggerAttackRelease('F0', '8n', now + 0.05);
+            baseBoom.volume.rampTo(-8, 0.01, now + 0.05);
             
-            // Create sequence of higher sounds that follow the main explosion
-            setTimeout(() => {
-                // First debris sound
-                debrisSynth.triggerAttackRelease('D2', '32n');  // Shorter duration
-                
-                // Set of random debris sounds
-                const playRandomDebris = () => {
-                    const randomNotes = ['C2', 'D2', 'E2', 'G2'];  // Removed higher notes
-                    const randomNote = randomNotes[Math.floor(Math.random() * randomNotes.length)];
-                    debrisSynth.triggerAttackRelease(randomNote, '32n');
-                };
-                
-                // Play fewer debris sounds at closer intervals
-                setTimeout(() => playRandomDebris(), 25);
-                setTimeout(() => playRandomDebris(), 75);
-                setTimeout(() => playRandomDebris(), 125);
-            }, 25);  // Start debris sooner
+            debris.triggerAttackRelease(getRandomNote(), '32n', now + 0.1);
+            baseBoom.triggerAttackRelease('C1', '16n', now + 0.075);
+            baseBoom.volume.rampTo(-10, 0.01, now + 0.075);
             
-            // Add low rumble with shorter duration
-            setTimeout(() => {
-                baseBoom.oscillator.type = 'square8';
-                baseBoom.volume.value = -8;
-                baseBoom.triggerAttackRelease('F0', '8n');  // Shorter duration
-            }, 50);
+            // Select only the most important secondary effects to reduce processing
+            debris.triggerAttackRelease(getRandomNote(), '32n', now + 0.15);
+            baseBoom.triggerAttackRelease('E0', '16n', now + 0.1);
+            baseBoom.volume.rampTo(-12, 0.01, now + 0.1);
             
-            // Add noise burst for explosion
-            setTimeout(() => {
-                noiseSynth.volume.value = -8;
-                noiseSynth.triggerAttackRelease('C1', '32n');  // Shorter duration
-            }, 35);
-            
-            // Add a second bass hit for more impact
-            setTimeout(() => {
-                baseBoom.volume.value = -10;
-                baseBoom.triggerAttackRelease('C1', '16n');  // Shorter duration
-            }, 75);
-            
-            // Secondary explosion for more impact
-            setTimeout(() => {
-                baseBoom.volume.value = -12;
-                baseBoom.triggerAttackRelease('E0', '16n');  // Shorter duration
-                
-                // More random debris
-                setTimeout(() => playRandomDebris(), 25);
-                setTimeout(() => playRandomDebris(), 60);
-            }, 100);
-            
-            // Final blast
-            setTimeout(() => {
-                debrisSynth.volume.value = -12;
-                debrisSynth.triggerAttackRelease('G1', '32n');  // Shorter duration
-            }, 150);
+            // Final blast with reduced volume
+            debris.triggerAttackRelease('G1', '32n', now + 0.15);
+            debris.volume.rampTo(-12, 0.01, now + 0.15);
             
         } catch (e) {
             console.error('Error playing grenade explosion:', e);
         }
+    }
+
+    // Setup death sound synth once and reuse it
+    setupScreamSynth() {
+        // Already created in the constructor, just make sure it's optimally configured
+        if (this.scream) {
+            // Reset to default for consistency
+            this.scream.oscillator.type = 'square4';
+            this.scream.envelope.attack = 0.005;
+            this.scream.envelope.decay = 0.2;
+            this.scream.envelope.sustain = 0.1;
+            this.scream.envelope.release = 0.4;
+        }
+        return this.scream;
     }
 
     playEnemyDeath(enemyId = null) {
@@ -428,79 +397,80 @@ export class AudioManager {
                 Tone.context.resume();
             }
             
+            // Get the synth
+            const scream = this.setupScreamSynth();
+            
+            // Only update scale occasionally to reduce computation
             // Increment death counter and possibly change scale
             this.deathCount++;
             if (this.deathCount >= this.scaleChangeThreshold) {
                 // Reset counter
                 this.deathCount = 0;
                 
-                // Set new change threshold
-                this.scaleChangeThreshold = Math.floor(Math.random() * 6) + 10; // 10-15
+                // Set new change threshold (higher to reduce frequency of changes)
+                this.scaleChangeThreshold = Math.floor(Math.random() * 6) + 12; // 12-17
                 
                 // Pick a new random scale
                 const scales = Object.keys(this.musicalScales);
-                let newScale;
-                do {
-                    newScale = scales[Math.floor(Math.random() * scales.length)];
-                } while (newScale === this.currentScale); // Ensure we change to a different scale
+                const newScale = scales[Math.floor(Math.random() * scales.length)];
                 
-                this.currentScale = newScale;
-                this.deathNotes = this.musicalScales[this.currentScale];
-                
-                // Reset note index
-                this.lastNoteIndex = Math.floor(Math.random() * this.deathNotes.length);
-                
-                console.log(`Changed to ${this.currentScale} scale`);
+                // Only change if it's significantly different
+                if (newScale !== this.currentScale) {
+                    this.currentScale = newScale;
+                    this.deathNotes = this.musicalScales[this.currentScale];
+                    
+                    // Reset note index
+                    this.lastNoteIndex = Math.floor(Math.random() * this.deathNotes.length);
+                }
             }
             
-            // Use the enemy ID to select a note if provided, otherwise continue the sequence
+            // Determine which note to play
             let noteIndex;
             if (enemyId !== null) {
-                // Use the enemy ID to select a deterministic but seemingly random note
+                // Simplified deterministic note selection
                 noteIndex = enemyId % this.deathNotes.length;
             } else {
-                // Otherwise, continue the sequence
+                // Cycle through notes
                 this.lastNoteIndex = (this.lastNoteIndex + 1) % this.deathNotes.length;
                 noteIndex = this.lastNoteIndex;
             }
             
             const note = this.deathNotes[noteIndex];
             
-            // Vary the synth settings slightly for each enemy
-            if (enemyId !== null) {
-                // Slightly vary the oscillator type for different timbres
-                // Nintendo-like oscillator types (8-bit/chiptune sound)
-                const oscTypes = ['square', 'square4', 'square8', 'pulse', 'pwm', 'sine4', 'triangle4', 'sawtooth8'];
+            // Only vary synth settings for "special" enemies to reduce computation
+            // Use a simple mod check to limit variations
+            if (enemyId !== null && enemyId % 3 === 0) {
+                // Reduced list of oscillator types for better performance
+                const oscTypes = ['square', 'square4', 'pulse', 'triangle4'];
                 const oscTypeIndex = enemyId % oscTypes.length;
-                this.scream.oscillator.type = oscTypes[oscTypeIndex];
+                scream.oscillator.type = oscTypes[oscTypeIndex];
                 
-                // Vary the envelope parameters for Nintendo-like sound character
-                const attackVar = 0.001 + (enemyId % 5) * 0.001;  // Very fast attack for crisp sounds
-                const decayVar = 0.1 + (enemyId % 8) * 0.03;     // Moderate decay
-                const sustainVar = 0.05 + (enemyId % 5) * 0.01;  // Low sustain for punchier sound
-                const releaseVar = 0.2 + (enemyId % 8) * 0.05;   // Shorter release but still with fade
-                
-                this.scream.envelope.attack = attackVar;
-                this.scream.envelope.decay = decayVar;
-                this.scream.envelope.sustain = sustainVar;
-                this.scream.envelope.release = releaseVar;
+                // Simplified envelope variation - only apply to certain enemies
+                scream.envelope.attack = 0.001 + (enemyId % 3) * 0.001;
+                scream.envelope.decay = 0.1 + (enemyId % 3) * 0.05;
+            } else {
+                // Use default settings for most enemies
+                scream.oscillator.type = 'square4';
+                scream.envelope.attack = 0.005;
+                scream.envelope.decay = 0.2;
             }
             
-            // Calculate a slightly lower note for the end of the slide
-            const endNoteIdx = Math.max(0, noteIndex - 2);
-            const endNote = this.deathNotes[endNoteIdx];
+            // Play the sound - using Tone.js scheduling for better performance
+            const now = Tone.now();
+            const duration = 0.25; // Shorter duration for better performance
             
-            // Play the musical death sound with Nintendo-like quality
-            const duration = 0.3; // Shorter duration for arcade-like effect
-            this.scream.triggerAttack(note);
+            // Trigger attack now
+            scream.triggerAttack(note, now);
             
-            // For Nintendo-like sounds, slide UP instead of down (more cheerful)
-            const higherNote = this.deathNotes[Math.min(noteIndex + 2, this.deathNotes.length - 1)];
-            this.scream.frequency.rampTo(Tone.Frequency(higherNote), duration * 0.6);
+            // Only for some enemies, perform frequency ramp (every 2nd enemy)
+            if ((enemyId === null) || (enemyId % 2 === 0)) {
+                // More performant frequency calculation
+                const higherNote = this.deathNotes[Math.min(noteIndex + 1, this.deathNotes.length - 1)];
+                scream.frequency.rampTo(Tone.Frequency(higherNote), duration * 0.5, now);
+            }
             
-            setTimeout(() => {
-                this.scream.triggerRelease();
-            }, duration * 1000);
+            // Schedule release using Tone.js timing instead of setTimeout
+            scream.triggerRelease(now + duration);
             
         } catch (e) {
             console.error('Error playing enemy death sound:', e);

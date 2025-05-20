@@ -62,7 +62,7 @@ export const GAME = {
 export const SOUNDS = {
     GUNSHOT: {
         type: 'hihat',
-        options: { volume: -10 }
+        options: { volume: -4 }
     },
     EXPLOSION: {
         type: 'tom',
@@ -82,6 +82,14 @@ export const SOUNDS = {
     },
     GRENADE_EXPLOSION: {
         type: 'tom',
-        options: { volume: 0 }
+        options: { volume: 5 }
+    },
+    FOOTSTEP: {
+        type: 'footstep',
+        options: { volume: -15 }
+    },
+    DRY_FIRE: {
+        type: 'click',
+        options: { volume: -10 }
     }
 }; 

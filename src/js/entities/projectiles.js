@@ -486,8 +486,18 @@ export class Grenade {
         this.hasExploded = true;
         this.explosionActive = true;
         
-        // Play the explosion sound
-        this.audioManager.playGrenadeExplosion();
+        // Play the explosion sound with enhanced logging
+        if (this.audioManager) {
+            console.log("Playing grenade explosion sound");
+            this.audioManager.playGrenadeExplosion();
+            
+            // Fallback sound in case the first one fails
+            setTimeout(() => {
+                this.audioManager.playGrenadeExplosion();
+            }, 50);
+        } else {
+            console.error("AudioManager not available for grenade explosion");
+        }
         
         // Create explosion with async object creation to reduce lag
         if (this.decalManager) {
@@ -541,6 +551,9 @@ export class Grenade {
     }
     
     createExplosionEffect() {
+        // Create debris immediately for better visual effect
+        this.createDebrisEffect();
+        
         // Create a bright light at explosion center
         const explosionLight = new THREE.PointLight(0x9B870C, 8, this.explosionRadius * 2.5);
         explosionLight.position.copy(this.position);
@@ -548,7 +561,7 @@ export class Grenade {
         this.scene.add(explosionLight);
         
         // Create a shockwave ring
-        const ringGeometry = new THREE.RingGeometry(0.08, 0.4, 12); // Further reduced from 16
+        const ringGeometry = new THREE.RingGeometry(0.08, 0.4, 8); // Reduced segments
         const ringMaterial = new THREE.MeshBasicMaterial({
             color: 0x9B870C,
             transparent: true,
@@ -559,18 +572,17 @@ export class Grenade {
         
         const ring = new THREE.Mesh(ringGeometry, ringMaterial);
         ring.position.copy(this.position);
-        ring.position.y = 0.1; // Just above ground
-        ring.rotation.x = Math.PI / 2; // Flat on ground
+        ring.position.y = 0.1;
+        ring.rotation.x = Math.PI / 2;
         this.scene.add(ring);
         
-        // Create particle effect for explosion with fewer particles
-        const particleCount = 40; // Reduced from 60
+        // Create particle effect with fewer particles
+        const particleCount = 30; // Reduced from 40
         const particles = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
         
         for (let i = 0; i < particleCount; i++) {
-            // Random position within sphere
             const radius = Math.random() * this.explosionRadius * 0.8;
             const theta = Math.random() * Math.PI * 2;
             const phi = Math.random() * Math.PI;
@@ -579,10 +591,9 @@ export class Grenade {
             positions[i * 3 + 1] = this.position.y + radius * Math.sin(phi) * Math.sin(theta);
             positions[i * 3 + 2] = this.position.z + radius * Math.cos(phi);
             
-            // Set all particles to the same yellow color
-            colors[i * 3] = 0.6; // R
-            colors[i * 3 + 1] = 0.5; // G
-            colors[i * 3 + 2] = 0.05; // B - slight yellow tint
+            colors[i * 3] = 0.6;
+            colors[i * 3 + 1] = 0.5;
+            colors[i * 3 + 2] = 0.05;
         }
         
         particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -600,51 +611,41 @@ export class Grenade {
         const particleSystem = new THREE.Points(particles, particleMaterial);
         this.scene.add(particleSystem);
         
-        // Create debris in second phase to stagger object creation
-        requestAnimationFrame(() => {
-            this.createDebrisEffect();
-        });
-        
-        // Animate the explosion - optimized version
+        // Animate the explosion with optimized timing
         let explosionTime = 0;
-        const explosionDuration = 400; // Fast animation
-        const frameTime = 16; // Approximately 60fps
+        const explosionDuration = 400;
         let lastTime = performance.now();
         
         const animateExplosion = () => {
             const now = performance.now();
-            const deltaTime = now - lastTime;
+            const deltaTime = Math.min(now - lastTime, 16.67); // Cap at ~60fps
             lastTime = now;
             
-            explosionTime += deltaTime > 50 ? frameTime : deltaTime; // Frame limiting to prevent large jumps
+            explosionTime += deltaTime;
             const progress = explosionTime / explosionDuration;
             
             if (progress < 1) {
-                // Fade out light
-                if (explosionLight) {
-                    explosionLight.intensity = 8 * (1 - progress * 1.5);
-                }
+                explosionLight.intensity = 8 * (1 - progress * 1.5);
                 
-                // Animate ring shockwave
                 const ringScale = 1 + progress * (this.explosionRadius * 8);
-                ring.scale.set(ringScale, ringScale, ringScale);
+                ring.scale.setScalar(ringScale);
                 ringMaterial.opacity = (1 - progress * 1.2) * 0.7;
                 
-                // Animate particles outward - update every few frames for better performance
+                // Update particles less frequently
                 if (explosionTime % 32 === 0) {
+                    const positions = particles.attributes.position.array;
                     for (let i = 0; i < particleCount; i++) {
                         const posIndex = i * 3;
                         const dirX = positions[posIndex] - this.position.x;
                         const dirY = positions[posIndex + 1] - this.position.y;
                         const dirZ = positions[posIndex + 2] - this.position.z;
                         
-                        const len = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
-                        if (len > 0.01) {
-                            const speedFactor = 0.05 * (1 + progress * 2);
-                            positions[posIndex] += (dirX / len) * speedFactor;
-                            positions[posIndex + 1] += (dirY / len) * speedFactor;
-                            positions[posIndex + 2] += (dirZ / len) * speedFactor;
-                        }
+                        const len = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ) || 0.001;
+                        const speedFactor = 0.05 * (1 + progress * 2);
+                        
+                        positions[posIndex] += (dirX / len) * speedFactor;
+                        positions[posIndex + 1] += (dirY / len) * speedFactor;
+                        positions[posIndex + 2] += (dirZ / len) * speedFactor;
                     }
                     particles.attributes.position.needsUpdate = true;
                 }
@@ -658,7 +659,6 @@ export class Grenade {
                 this.scene.remove(particleSystem);
                 this.scene.remove(ring);
                 
-                // Dispose geometries and materials
                 particles.dispose();
                 particleMaterial.dispose();
                 ringGeometry.dispose();
@@ -670,165 +670,181 @@ export class Grenade {
     }
     
     createDebrisEffect() {
-        // Create debris particles with reduced count
-        const debrisCount = 8; // Reduced from 15
+        // Increase debris count for more noticeable effect
+        const debrisCount = 12; // Increased from 8
         this.debrisParticles = [];
         
-        // Reuse geometries for debris to reduce memory usage
+        // Cache geometries and materials for reuse
         const debrisGeometries = {
-            box: new THREE.BoxGeometry(1, 0.15, 0.8, 1, 1, 1), // Reduced complexity
-            circle: new THREE.CircleGeometry(1, 4), // Reduced from 6 segments
-            plane: new THREE.PlaneGeometry(1, 0.8, 1, 1), // Reduced complexity
-            cone: new THREE.ConeGeometry(0.5, 0.2, 4, 1), // Reduced segments
-            cylinder: new THREE.CylinderGeometry(0.5, 0.5, 0.1, 4, 1) // Reduced segments
+            shard: new THREE.ConeGeometry(0.2, 0.8, 3),
+            chunk: new THREE.DodecahedronGeometry(0.3, 0),
+            splinter: new THREE.BoxGeometry(0.1, 0.6, 0.1),
+            plate: new THREE.BoxGeometry(0.4, 0.1, 0.4),
+            miniGrenade: new THREE.SphereGeometry(0.15, 6, 6) // Add mini grenade-like debris
         };
         
-        // Shared material for all debris
+        // Create materials with more grenade-like colors
         const debrisMaterial = new THREE.MeshPhongMaterial({
             color: 0x9B870C,
             emissive: 0x9B870C,
+            emissiveIntensity: 0.3,
+            shininess: 40,
+            flatShading: true
+        });
+        
+        // Add a second material variant for visual variety
+        const debrisMaterial2 = new THREE.MeshPhongMaterial({
+            color: 0x777777, // Dark metal color
+            emissive: 0x444444,
             emissiveIntensity: 0.1,
-            shininess: 1
+            shininess: 60,
+            flatShading: true
         });
         
         for (let i = 0; i < debrisCount; i++) {
-            // Direction calculation
+            // Direction calculation with more upward momentum
             const theta = Math.random() * Math.PI * 2;
-            const phi = Math.random() * Math.PI;
+            const phi = Math.random() * Math.PI / 2; // More upward bias
             
             const direction = new THREE.Vector3(
-                Math.sin(phi) * Math.cos(theta) * 1.2,
-                Math.random() * 0.2 + 0.1,
-                Math.sin(phi) * Math.sin(theta) * 1.2
+                Math.sin(phi) * Math.cos(theta) * 1.5,
+                Math.random() * 0.8 + 0.4, // Much higher upward velocity
+                Math.sin(phi) * Math.sin(theta) * 1.5
             );
             
-            // Size for debris
-            const size = Math.random() * 0.35 + 0.05;
+            // Select random geometry - better selection
+            const geometryTypes = Object.keys(debrisGeometries);
+            const geometry = debrisGeometries[geometryTypes[Math.floor(Math.random() * geometryTypes.length)]];
             
-            // Select geometry from shared pool
-            let geometry;
-            const geomType = Math.floor(Math.random() * 5);
+            // Alternate materials for variety
+            const material = i % 2 === 0 ? debrisMaterial : debrisMaterial2;
+            const debris = new THREE.Mesh(geometry, material);
             
-            if (geomType === 0) {
-                geometry = debrisGeometries.box;
-            } else if (geomType === 1) {
-                geometry = debrisGeometries.circle;
-            } else if (geomType === 2) {
-                geometry = debrisGeometries.plane;
-            } else if (geomType === 3) {
-                geometry = debrisGeometries.cone;
-            } else {
-                geometry = debrisGeometries.cylinder;
-            }
+            // Randomized scale
+            const baseScale = 0.6 + Math.random() * 0.6;
+            debris.scale.setScalar(baseScale);
             
-            const debris = new THREE.Mesh(geometry, debrisMaterial);
+            debris.rotation.set(
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2
+            );
             
-            // Scale to appropriate size
-            debris.scale.set(size, size, size);
-            
-            // Set initial rotation based on geometry type
-            if (geomType === 1 || geomType === 2) {
-                debris.rotation.set(
-                    Math.PI/2,
-                    Math.random() * Math.PI * 2,
-                    0
-                );
-            } else {
-                debris.rotation.set(
-                    Math.random() * Math.PI * 2,
-                    Math.random() * Math.PI * 2,
-                    Math.random() * Math.PI * 2
-                );
-            }
-            
-            // Position at explosion center
-            debris.position.copy(this.position);
+            // Add slight offset for better initial spread
+            const offset = new THREE.Vector3(
+                (Math.random() - 0.5) * 0.3,
+                (Math.random() - 0.5) * 0.3,
+                (Math.random() - 0.5) * 0.3
+            );
+            debris.position.copy(this.position).add(offset);
             this.scene.add(debris);
             
-            // Store with metadata
+            // Enhanced physics parameters for better bouncing
             this.debrisParticles.push({
                 mesh: debris,
                 direction: direction,
-                speed: Math.random() * 0.35 + 0.15,
-                rotationSpeed: {
-                    x: Math.random() * 0.2 - 0.1,
-                    y: Math.random() * 0.2 - 0.1,
-                    z: Math.random() * 0.2 - 0.1
-                },
-                settled: false
+                speed: Math.random() * 0.5 + 0.3, // Higher speed range
+                rotationAxis: new THREE.Vector3(
+                    Math.random() - 0.5,
+                    Math.random() - 0.5,
+                    Math.random() - 0.5
+                ).normalize(),
+                rotationSpeed: Math.random() * 0.3 + 0.1,
+                bounceCount: 0,
+                maxBounces: Math.floor(Math.random() * 3) + 2, // Random 2-4 bounces
+                settled: false,
+                spinDecay: 0.95,
+                elasticity: 0.6 + Math.random() * 0.2, // Higher elasticity (0.6-0.8)
+                // Add bounce sound flag
+                playedBounceSound: false,
+                // Random delay before first bounce sound to avoid all playing at once
+                bounceSoundDelay: Math.random() * 300
             });
         }
         
-        // Animate debris with less frequent updates
+        // Optimized debris animation
+        let lastFrameTime = performance.now();
+        const targetFrameTime = 1000 / 60; // Target 60 FPS
+        
         const animateDebris = () => {
             if (!this.isActive || !this.debrisParticles || this.debrisParticles.length === 0) return;
             
+            const currentTime = performance.now();
+            const deltaTime = Math.min((currentTime - lastFrameTime) / 1000, targetFrameTime / 1000);
+            lastFrameTime = currentTime;
+            
+            let activeCount = 0;
+            
             for (const debris of this.debrisParticles) {
                 if (debris.settled) continue;
+                activeCount++;
                 
-                // Move in direction
-                debris.mesh.position.x += debris.direction.x * debris.speed;
-                debris.mesh.position.y += debris.direction.y * debris.speed;
-                debris.mesh.position.z += debris.direction.z * debris.speed;
+                // Apply velocity with deltaTime
+                const frameSpeed = debris.speed * deltaTime * 60; // Normalize to 60 FPS
+                debris.mesh.position.x += debris.direction.x * frameSpeed;
+                debris.mesh.position.y += debris.direction.y * frameSpeed;
+                debris.mesh.position.z += debris.direction.z * frameSpeed;
                 
-                // Apply gravity
-                debris.direction.y -= 0.05;
+                // Gravity with slightly slower fall for smaller debris
+                const gravity = 0.06 * deltaTime * 60 * (1 - (debris.mesh.scale.x - 0.6) / 0.6 * 0.3);
+                debris.direction.y -= gravity;
                 
-                // Floor bounce with friction
-                if (debris.mesh.position.y < 0.02) {
-                    debris.mesh.position.y = 0.01;
+                // Ground collision with bouncing
+                if (debris.mesh.position.y < 0.15) {
+                    debris.bounceCount++;
+                    debris.mesh.position.y = 0.15;
                     
-                    // Apply friction
-                    const frictionFactor = 0.6;
-                    debris.direction.y = 0;
-                    debris.direction.x *= frictionFactor;
-                    debris.direction.z *= frictionFactor;
+                    // Play bounce sound for larger debris with random delay
+                    if (this.audioManager && !debris.playedBounceSound && 
+                        debris.mesh.scale.x > 0.8 && 
+                        debris.bounceCount === 1) {
+                        debris.playedBounceSound = true;
+                        setTimeout(() => {
+                            this.audioManager.playGrenadeBounce();
+                        }, debris.bounceSoundDelay);
+                    }
                     
-                    // Check for settling
-                    if (debris.speed < 0.1) {
+                    if (debris.bounceCount >= debris.maxBounces || debris.speed < 0.05) {
                         debris.settled = true;
-                        debris.mesh.position.y = 0.01;
+                        debris.mesh.position.y = 0.12;
                         
-                        // Make flat on ground
-                        const flatRotation = new THREE.Euler(
-                            Math.PI/2,
+                        // Set final rotation once and stop updating
+                        debris.mesh.rotation.set(
+                            Math.random() < 0.5 ? 0 : Math.PI/2,
                             Math.random() * Math.PI * 2,
-                            0
+                            Math.random() < 0.5 ? 0 : Math.PI/4
                         );
-                        debris.mesh.setRotationFromEuler(flatRotation);
+                    } else {
+                        // More energetic bounces
+                        debris.direction.y = Math.abs(debris.direction.y) * debris.elasticity;
                         
-                        // Stop rotation
-                        debris.rotationSpeed.x = 0;
-                        debris.rotationSpeed.y = 0;
-                        debris.rotationSpeed.z = 0;
+                        // Less horizontal movement loss per bounce
+                        debris.direction.x *= 0.85;
+                        debris.direction.z *= 0.85;
+                        
+                        // Decay elasticity more realistically
+                        debris.elasticity *= 0.8;
                     }
                 }
                 
-                // Rotate if not settled
+                // Simplified rotation using Euler angles
                 if (!debris.settled) {
-                    debris.mesh.rotation.x += debris.rotationSpeed.x;
-                    debris.mesh.rotation.y += debris.rotationSpeed.y;
-                    debris.mesh.rotation.z += debris.rotationSpeed.z;
+                    debris.mesh.rotation.x += debris.rotationSpeed * deltaTime * 60;
+                    debris.mesh.rotation.y += debris.rotationSpeed * deltaTime * 60;
+                    debris.mesh.rotation.z += debris.rotationSpeed * deltaTime * 60;
+                    debris.rotationSpeed *= debris.spinDecay;
                 }
                 
-                // Slow down with air resistance
-                debris.speed *= 0.92;
-                
-                // Reduce rotation speed
-                const rotFactor = 0.9;
-                debris.rotationSpeed.x *= rotFactor;
-                debris.rotationSpeed.y *= rotFactor;
-                debris.rotationSpeed.z *= rotFactor;
+                // Gradual slowdown
+                debris.speed *= 0.98;
             }
             
-            // Check if any debris is still moving
-            const anyMoving = this.debrisParticles.some(debris => !debris.settled);
-            if (anyMoving) {
+            // Only continue animation if there are active particles
+            if (activeCount > 0) {
                 requestAnimationFrame(animateDebris);
             }
         };
         
-        // Start the animation
         animateDebris();
     }
     

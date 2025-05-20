@@ -625,25 +625,20 @@ export class CollisionSystem {
                     const damageMultiplier = 1 - (distance / explosionRadius); // 100% damage at center, 0% at edge
                     const damageAmount = Math.ceil(10 * damageMultiplier); // Max damage of 10
                     
-                    // Apply damage - should kill most enemies in one hit if close enough
-                    enemy.takeDamage(damageAmount);
+                    // Instead of directly applying damage, blow the enemy away
+                    // We'll apply damage first to make sure low-health enemies are affected (won't cancel if health <= 0)
+                    enemy.takeDamage(damageAmount, false); // Don't trigger death yet
                     
-                    // Apply knockback effect
-                    if (enemy.isActive) {
-                        const knockbackDirection = new THREE.Vector3()
-                            .subVectors(enemyPos, grenadePos)
-                            .normalize();
-                        
-                        const knockbackStrength = explosionRadius - distance;
-                        
-                        // Apply knockback if enemy mesh exists
-                        if (enemy.mesh) {
-                            enemy.mesh.position.add(
-                                knockbackDirection.multiplyScalar(knockbackStrength * 0.5)
-                            );
-                            enemy.position.copy(enemy.mesh.position);
-                        }
-                    }
+                    // Calculate direction away from explosion
+                    const blowDirection = new THREE.Vector3()
+                        .subVectors(enemyPos, grenadePos)
+                        .normalize();
+                    
+                    // Calculate strength based on distance (closer = stronger force)
+                    const blowStrength = (explosionRadius - distance) / explosionRadius * 16; // Max strength is 16 (doubled from 8)
+                    
+                    // Blow the enemy away with physics
+                    enemy.blowAway(blowDirection, blowStrength);
                 }
             });
             

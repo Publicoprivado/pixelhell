@@ -45,9 +45,9 @@ export class DecalManager {
         
         // Create reusable geometries
         this.geometries = {
-            smallSplat: new THREE.CircleGeometry(0.5, 6), // Fewer segments
-            mediumSplat: new THREE.CircleGeometry(0.7, 6), // Fewer segments
-            largeSplat: new THREE.CircleGeometry(1.0, 6), // Fewer segments
+            smallSplat: new THREE.CircleGeometry(0.5, 8), // Octagon
+            mediumSplat: new THREE.CircleGeometry(0.7, 8), // Octagon
+            largeSplat: new THREE.CircleGeometry(1.0, 8), // Octagon
             surface: new THREE.PlaneGeometry(0.5, 0.5)
         };
         
@@ -56,26 +56,72 @@ export class DecalManager {
     }
 
     createDecalTextures() {
-        // Create paintball splatter texture
+        // Create high resolution paintball splatter texture
         const canvas = document.createElement('canvas');
-        canvas.width = 64;
-        canvas.height = 64;
+        canvas.width = 512;
+        canvas.height = 512;
         const context = canvas.getContext('2d');
         
-        // Draw a splatter pattern
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        
+        // Function to draw an octagon
+        const drawOctagon = (x, y, radius) => {
+            const sides = 8;
+            context.beginPath();
+            for (let i = 0; i <= sides; i++) {
+                const angle = (i * 2 * Math.PI / sides) - Math.PI / sides; // Rotate by half segment
+                const px = x + radius * Math.cos(angle);
+                const py = y + radius * Math.sin(angle);
+                if (i === 0) {
+                    context.moveTo(px, py);
+                } else {
+                    context.lineTo(px, py);
+                }
+            }
+            context.closePath();
+            context.fill();
+        };
+        
+        // Draw main splatter pattern
         context.fillStyle = '#fff';
-        context.beginPath();
-        context.arc(32, 32, 16, 0, Math.PI * 2);
-        context.fill();
+        drawOctagon(centerX, centerY, 100); // Main splat
         
         // Add some random splatter details
         for (let i = 0; i < 8; i++) {
-            const x = 32 + (Math.random() - 0.5) * 40;
-            const y = 32 + (Math.random() - 0.5) * 40;
-            const radius = 3 + Math.random() * 5;
-            context.beginPath();
-            context.arc(x, y, radius, 0, Math.PI * 2);
-            context.fill();
+            const radius = 15 + Math.random() * 20;
+            
+            // Calculate random position with controlled spread
+            const spreadRadius = 150;
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.random() * spreadRadius;
+            
+            const x = centerX + Math.cos(angle) * distance;
+            const y = centerY + Math.sin(angle) * distance;
+            
+            // Draw octagon for each splatter
+            drawOctagon(x, y, radius);
+            
+            // Add a smaller highlight octagon
+            const highlightRadius = radius * 0.6;
+            const highlightOffset = radius * 0.2;
+            drawOctagon(
+                x + highlightOffset,
+                y + highlightOffset,
+                highlightRadius
+            );
+        }
+        
+        // Add some smaller octagons for texture
+        for (let i = 0; i < 12; i++) {
+            const radius = 3 + Math.random() * 6;
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.random() * 170;
+            
+            const x = centerX + Math.cos(angle) * distance;
+            const y = centerY + Math.sin(angle) * distance;
+            
+            drawOctagon(x, y, radius);
         }
         
         // Create texture

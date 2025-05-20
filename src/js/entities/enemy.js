@@ -19,6 +19,15 @@ export class Enemy {
         this.hitEffects = []; // Store hit effects for animation
         this.audioManager = spawnManager.audioManager; // Get audio manager from spawn manager
         
+        // Generate a unique ID for this enemy (for sound variety)
+        this.enemyId = Math.floor(Math.random() * 1000000);
+        
+        // Blown away state for grenades
+        this.isBlownAway = false;
+        this.blownAwayVelocity = new THREE.Vector3(0, 0, 0);
+        this.blownAwayRotation = new THREE.Vector3(0, 0, 0);
+        this.gravity = 9.8; // Gravity for physics
+        
         // Shooting properties
         this.lastShotTime = 0;
         this.shootingCooldown = this.getShootingCooldownByType();
@@ -125,6 +134,12 @@ export class Enemy {
         // If enemy is in dying animation
         if (this.isDying) {
             this.updateDeathAnimation(dt);
+            return;
+        }
+        
+        // If enemy is blown away by explosion
+        if (this.isBlownAway) {
+            this.updateBlownAwayAnimation(dt);
             return;
         }
         
@@ -270,19 +285,19 @@ export class Enemy {
         
         // Adjust animation speed based on movement intensity
         // Faster movement = faster animation
-        const animationSpeed = GAME.STEP_FREQUENCY / 3 * (0.2 + movementIntensity * 0.8);
+        const animationSpeed = (GAME.STEP_FREQUENCY / 3 * (0.2 + movementIntensity * 0.8)) * 2; // Doubled the speed
         this.jumpTime += dt * animationSpeed;
         
         // Create a stepping cycle with sin - multiplied for more pronounced steps
         const stepCycle = Math.sin(this.jumpTime * Math.PI);
         
         // Exaggerated up and down movement - scale with movement intensity
-        const baseJumpHeight = 0.25; // Base jump height
+        const baseJumpHeight = 0.45; // Base jump height
         const jumpHeight = Math.abs(stepCycle) * baseJumpHeight * movementIntensity;
         this.mesh.position.y = size / 2 + jumpHeight;
         
         // Exaggerated squash and stretch - scale with movement intensity
-        const baseSquashFactor = 0.3;
+        const baseSquashFactor = 0.5;
         const squashFactor = baseSquashFactor * movementIntensity;
         this.mesh.scale.y = (this.type === 'THIN' ? 1.6 : (this.type === 'CHUBBY' ? 0.8 : 1)) * (1 - jumpHeight * squashFactor);
         this.mesh.scale.x = (this.type === 'THIN' ? 0.6 : (this.type === 'CHUBBY' ? 1.5 : 1)) * (1 + jumpHeight * squashFactor * 0.5);
@@ -471,19 +486,74 @@ export class Enemy {
         this.isDying = true;
         this.deathTime = 0;
         
-        // Play death scream immediately when dying starts
+        // Play death sound immediately for direct feedback
         if (this.audioManager) {
-            this.audioManager.playEnemyDeath();
+            this.audioManager.playEnemyDeath(this.enemyId);
         }
         
         // Stop current movement
         this.velocity.set(0, 0, 0);
         
-        // Initial jump upward - increase this to ensure it doesn't sink
-        this.mesh.position.y += 0.7; // Increased from 0.5
+        // Flash enemy white
+        if (this.mesh.material) {
+            this.mesh.material.color.setHex(0xffffff);
+        }
         
         // Create explosion of paint particles
         this.createPaintExplosion();
+        
+        // Create a quick explosion effect
+        const enemyColor = this.getColorByType();
+        const enemySize = this.getSizeByType() * 1.5; // Slightly larger than enemy
+        
+        // Create explosion sphere
+        const explosionGeometry = new THREE.SphereGeometry(enemySize, 12, 12);
+        const explosionMaterial = new THREE.MeshBasicMaterial({
+            color: enemyColor,
+            transparent: true,
+            opacity: 1.0,
+            blending: THREE.AdditiveBlending // Make it glow
+        });
+        
+        const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
+        explosion.position.copy(this.mesh.position);
+        this.scene.add(explosion);
+        
+        // Add a point light for glow effect
+        const light = new THREE.PointLight(enemyColor, 5, 3);
+        light.position.copy(this.mesh.position);
+        this.scene.add(light);
+        
+        // Quickly dispose of the enemy after a short delay
+        setTimeout(() => {
+            this.die();
+            
+            // Animate explosion
+            let opacity = 1.0;
+            let scale = 1.0;
+            
+            const animateExplosion = () => {
+                opacity -= 0.05;
+                scale += 0.15;
+                
+                if (opacity <= 0) {
+                    this.scene.remove(explosion);
+                    this.scene.remove(light);
+                    explosionMaterial.dispose();
+                    explosionGeometry.dispose();
+                    return;
+                }
+                
+                explosionMaterial.opacity = opacity;
+                explosion.scale.set(scale, scale, scale);
+                light.intensity = opacity * 5;
+                
+                requestAnimationFrame(animateExplosion);
+            };
+            
+            // Start animation
+            animateExplosion();
+        }, 100); // Remove after a very short delay for the white flash
     }
     
     createPaintExplosion() {
@@ -575,82 +645,9 @@ export class Enemy {
     }
     
     updateDeathAnimation(dt) {
+        // This is now very simple - just wait for the timeout in startDyingAnimation to complete
+        // Keep this method for compatibility, but it doesn't do much
         this.deathTime += dt;
-        
-        if (this.deathTime < 1.5) { // Longer animation time
-            // Over 1.5 seconds, animate to lying down position
-            const progress = this.deathTime / 1.5;
-            const size = this.getSizeByType();
-            
-            // More dramatic death animation
-            if (progress < 0.4) {
-                // First phase: rise up and start tipping
-                const riseProgress = progress / 0.4;
-                
-                // Rise up before falling
-                this.mesh.position.y = size / 2 + 0.7 + (riseProgress * 0.4);
-                
-                // Start rotation
-                this.mesh.rotation.x = riseProgress * Math.PI / 4;
-                
-                // Add some rotation on other axes for more dramatic effect
-                this.mesh.rotation.z = riseProgress * (Math.random() > 0.5 ? 0.2 : -0.2);
-            } else {
-                // Second phase: fall down
-                const fallProgress = (progress - 0.4) / 0.6;
-                
-                // Complete the fall rotation
-                this.mesh.rotation.x = (Math.PI / 4) + fallProgress * (Math.PI / 2 - Math.PI / 4);
-                
-                // Calculate height to prevent sinking
-                let originalHeight = size;
-                if (this.type === 'THIN') originalHeight *= 1.6;
-                else if (this.type === 'CHUBBY') originalHeight *= 0.8;
-                
-                // Keep it above the ground
-                const heightFactor = 1 - Math.sin(this.mesh.rotation.x);
-                
-                // Calculate the appropriate height based on the current rotation and dimensions
-                // Use a higher minimum value (0.35) and ensure the object's bottom edge stays above the ground
-                const minHeightValue = 0.35; // Increased minimum height to prevent sinking
-                const sizeAdjustment = originalHeight * 0.3; // Adjusted offset based on size
-                
-                // Ensure the mesh stays visibly on the floor regardless of rotation
-                this.mesh.position.y = Math.max(minHeightValue, 
-                    originalHeight * heightFactor * 0.5 + sizeAdjustment);
-                
-                // Move forward as it falls
-                const zOffset = originalHeight * 0.5 * Math.cos(Math.PI/2 - this.mesh.rotation.x);
-                this.mesh.position.z += fallProgress * zOffset * 0.15;
-            }
-            
-            // Scale adjustments as it flattens
-            const baseScale = this.type === 'THIN' ? 0.6 : (this.type === 'CHUBBY' ? 1.5 : 1);
-            const baseYScale = this.type === 'THIN' ? 1.6 : (this.type === 'CHUBBY' ? 0.8 : 1);
-            
-            if (progress > 0.4) {
-                // Flatten as it dies
-                const flattenProgress = (progress - 0.4) / 0.6;
-                this.mesh.scale.x = baseScale * (1 + flattenProgress * 0.4);
-                this.mesh.scale.y = baseYScale * (1 - flattenProgress * 0.8);
-                this.mesh.scale.z = baseScale * (1 + flattenProgress * 0.2);
-            }
-            
-            // Fade out the enemy toward the end
-            if (progress > 0.6) {
-                const fadeProgress = (progress - 0.6) / 0.4;
-                if (this.mesh.material) {
-                    this.mesh.material.transparent = true;
-                    this.mesh.material.opacity = 1 - fadeProgress;
-                }
-            }
-            
-            // Update attached bullets
-            this.updateAttachedBullets();
-        } else {
-            // After animation completes, actually die
-            this.die();
-        }
     }
     
     die() {
@@ -887,5 +884,57 @@ export class Enemy {
         };
         
         animateFlash();
+    }
+    
+    // Add a new method to handle being blown away by grenade
+    blowAway(direction, strength) {
+        if (!this.isActive || this.isDying || this.isBlownAway) return;
+        
+        this.isBlownAway = true;
+        
+        // Calculate initial velocity based on direction and strength
+        this.blownAwayVelocity = direction.clone().multiplyScalar(strength);
+        
+        // Add upward component for arc
+        this.blownAwayVelocity.y = Math.min(strength * 1.5, 5);
+        
+        // Random rotation speed
+        this.blownAwayRotation.set(
+            (Math.random() - 0.5) * 10, 
+            (Math.random() - 0.5) * 10,
+            (Math.random() - 0.5) * 10
+        );
+        
+        // Remove death scream - don't play sound for grenade deaths
+    }
+    
+    updateBlownAwayAnimation(dt) {
+        // Apply gravity to vertical velocity
+        this.blownAwayVelocity.y -= this.gravity * dt;
+        
+        // Move enemy based on velocity
+        this.mesh.position.add(this.blownAwayVelocity.clone().multiplyScalar(dt));
+        
+        // Update position for collision detection
+        this.position.x = this.mesh.position.x;
+        this.position.z = this.mesh.position.z;
+        
+        // Rotate mesh for tumbling effect
+        this.mesh.rotation.x += this.blownAwayRotation.x * dt;
+        this.mesh.rotation.y += this.blownAwayRotation.y * dt;
+        this.mesh.rotation.z += this.blownAwayRotation.z * dt;
+        
+        // Check if enemy has hit the ground
+        if (this.mesh.position.y <= 0.2) {
+            // Set on ground and start death animation
+            this.mesh.position.y = 0.2;
+            
+            // Remove death scream - don't play sound for grenade deaths
+            
+            this.die();
+        }
+        
+        // Update attached bullets
+        this.updateAttachedBullets();
     }
 } 

@@ -58,26 +58,8 @@ export class InputHandler {
             if (e.button === 0) { // Left click
                 this.mouse.isDown = true;
                 this.keys.shoot = true;
-            } else if (e.button === 2) { // Right click
-                // First check if we're in debounce period
-                if (this.rightClickDebounce) {
-                    return;
-                }
-                
-                // Also check time-based interval
-                const now = Date.now();
-                if (now - this.lastRightClickTime < this.rightClickMinInterval) {
-                    return;
-                }
-                
-                // Set debounce flag
-                this.rightClickDebounce = true;
-                this.lastRightClickTime = now;
-                
-                setTimeout(() => {
-                    this.rightClickDebounce = false;
-                }, this.rightClickDebounceTime);
-                
+            } else if (e.button === 2) { // Right click for grenades
+                // Set grenade key to true - let the game handle debouncing
                 this.keys.grenade = true;
             }
         });
@@ -87,7 +69,10 @@ export class InputHandler {
                 this.mouse.isDown = false;
                 this.keys.shoot = false;
             } else if (e.button === 2) { // Right click
-                this.keys.grenade = false;
+                // Reset after a short delay to ensure it's processed
+                setTimeout(() => {
+                    this.keys.grenade = false;
+                }, 50);
             }
         });
 

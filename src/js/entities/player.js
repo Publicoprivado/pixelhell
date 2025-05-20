@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as Tone from 'tone';
 import { COLORS, SIZES, GAME } from '../utils/constants.js';
 
 export class Player {
@@ -22,6 +23,9 @@ export class Player {
         this.lastGrenadeTime = 0; // Initialize to 0 to ensure first grenade can be thrown
         this.grenadeRate = 2000; // milliseconds between grenades
         this.isDead = false; // Add isDead flag
+        
+        // Add controls enabled flag
+        this.controlsEnabled = true;
         
         // Gun animation states
         this.isGunHolstered = true;
@@ -192,17 +196,120 @@ export class Player {
         gameOverMsg.textContent = 'GAME OVER';
         document.body.appendChild(gameOverMsg);
         
-        // Optional: Add a restart button
+        // Create pixel art style restart button
         const restartBtn = document.createElement('button');
+        restartBtn.textContent = 'RESTART GAME';
         restartBtn.style.position = 'fixed';
         restartBtn.style.top = '60%';
         restartBtn.style.left = '50%';
         restartBtn.style.transform = 'translate(-50%, -50%)';
-        restartBtn.style.padding = '10px 20px';
-        restartBtn.style.fontSize = '24px';
+        restartBtn.style.fontSize = '16px';
+        restartBtn.style.padding = '16px 32px';
+        restartBtn.style.backgroundColor = '#aa0000';  // Red base color
+        restartBtn.style.color = '#ffffff';
+        restartBtn.style.border = 'none';
         restartBtn.style.cursor = 'pointer';
-        restartBtn.textContent = 'Restart Game';
-        restartBtn.onclick = () => window.location.reload();
+        restartBtn.style.fontFamily = '"Press Start 2P", cursive';
+        restartBtn.style.textTransform = 'uppercase';
+        restartBtn.style.letterSpacing = '2px';
+        restartBtn.style.imageRendering = 'pixelated';
+        restartBtn.style.boxShadow = 'inset -4px -4px 0px 0px #660000';  // Darker red for shadow
+        restartBtn.style.outline = 'none';
+        
+        // Create pixel art border
+        restartBtn.style.border = '4px solid #ffffff';
+        restartBtn.style.borderStyle = 'solid';
+        restartBtn.style.borderWidth = '4px';
+        restartBtn.style.borderLeftColor = '#ffffff';
+        restartBtn.style.borderTopColor = '#ffffff';
+        restartBtn.style.borderRightColor = '#888888';
+        restartBtn.style.borderBottomColor = '#888888';
+        
+        // Add hover and active states
+        restartBtn.onmouseover = () => {
+            restartBtn.style.backgroundColor = '#cc0000';  // Lighter red on hover
+            restartBtn.style.boxShadow = 'inset -4px -4px 0px 0px #880000';
+        };
+        
+        restartBtn.onmouseout = () => {
+            restartBtn.style.backgroundColor = '#aa0000';  // Back to base red
+            restartBtn.style.boxShadow = 'inset -4px -4px 0px 0px #660000';
+            restartBtn.style.transform = 'translate(-50%, -50%)';
+            restartBtn.style.borderLeftColor = '#ffffff';
+            restartBtn.style.borderTopColor = '#ffffff';
+            restartBtn.style.borderRightColor = '#888888';
+            restartBtn.style.borderBottomColor = '#888888';
+        };
+        
+        restartBtn.onmousedown = () => {
+            restartBtn.style.transform = 'translate(-48%, -48%)';  // Slight offset for press effect
+            restartBtn.style.backgroundColor = '#880000';  // Darker red when pressed
+            restartBtn.style.boxShadow = 'inset -2px -2px 0px 0px #440000';
+            restartBtn.style.borderLeftColor = '#888888';
+            restartBtn.style.borderTopColor = '#888888';
+            restartBtn.style.borderRightColor = '#ffffff';
+            restartBtn.style.borderBottomColor = '#ffffff';
+        };
+        
+        restartBtn.onmouseup = () => {
+            restartBtn.style.transform = 'translate(-50%, -50%)';
+            restartBtn.style.backgroundColor = '#aa0000';
+            restartBtn.style.boxShadow = 'inset -4px -4px 0px 0px #660000';
+            restartBtn.style.borderLeftColor = '#ffffff';
+            restartBtn.style.borderTopColor = '#ffffff';
+            restartBtn.style.borderRightColor = '#888888';
+            restartBtn.style.borderBottomColor = '#888888';
+        };
+        
+        // Add button shadow element
+        const buttonShadow = document.createElement('div');
+        buttonShadow.style.position = 'fixed';
+        buttonShadow.style.top = '61%';  // Slightly offset from button
+        buttonShadow.style.left = '50.5%';  // Slightly offset from button
+        buttonShadow.style.transform = 'translate(-50%, -50%)';
+        buttonShadow.style.width = restartBtn.offsetWidth + 'px';
+        buttonShadow.style.height = restartBtn.offsetHeight + 'px';
+        buttonShadow.style.backgroundColor = '#000000';
+        buttonShadow.style.zIndex = '999';  // Below the button
+        document.body.appendChild(buttonShadow);
+        
+        // Add click handler
+        restartBtn.onclick = async () => {
+            try {
+                // Make sure audio context is running
+                await Tone.start();
+                
+                // Play descending notes before reload
+                const synth = new Tone.Synth({
+                    oscillator: { type: "square" },
+                    envelope: { attack: 0.01, decay: 0.2, sustain: 0.2, release: 0.2 }
+                }).toDestination();
+                
+                synth.volume.value = -15;
+                synth.triggerAttackRelease("C4", "8n");
+                setTimeout(() => synth.triggerAttackRelease("G3", "8n"), 150);
+                setTimeout(() => synth.triggerAttackRelease("C3", "8n"), 300);
+                
+                // Fade out and reload
+                gameOverMsg.style.transition = 'opacity 0.5s';
+                restartBtn.style.transition = 'opacity 0.5s';
+                buttonShadow.style.transition = 'opacity 0.5s';
+                
+                gameOverMsg.style.opacity = '0';
+                restartBtn.style.opacity = '0';
+                buttonShadow.style.opacity = '0';
+                
+                // Make sure to reload after the sound and animation finish
+                setTimeout(() => {
+                    window.location.href = window.location.href;
+                }, 800);
+            } catch (error) {
+                console.error("Error during restart:", error);
+                // Fallback: just reload if there's an error
+                window.location.reload();
+            }
+        };
+        
         document.body.appendChild(restartBtn);
     }
     
@@ -220,8 +327,14 @@ export class Player {
     }
     
     handleMovement(inputHandler, dt) {
-        // If player is dead, don't process movement
-        if (this.isDead) return;
+        // If player is dead or controls disabled, don't process movement
+        if (this.isDead || !this.controlsEnabled) {
+            // Reset velocity and movement flags when controls disabled
+            this.velocity.set(0, 0, 0);
+            this.isMoving = false;
+            this.movementIntensity = 0;
+            return;
+        }
 
         // Reset velocity
         this.velocity.set(0, 0, 0);
@@ -268,8 +381,8 @@ export class Player {
     }
     
     handleRotation(inputHandler, camera) {
-        // If player is dead, don't process rotation
-        if (this.isDead) return;
+        // If player is dead or controls disabled, don't process rotation
+        if (this.isDead || !this.controlsEnabled) return;
 
         try {
             // Get the mouse position in normalized device coordinates (-1 to +1)
@@ -307,13 +420,13 @@ export class Player {
     }
     
     handleShooting(inputHandler, raycaster, camera) {
-        // If player is dead, don't process shooting
-        if (this.isDead) return;
+        // If player is dead or controls disabled, don't process shooting
+        if (this.isDead || !this.controlsEnabled) return;
 
         const now = Date.now();
         
-        // Check if player is shooting and not reloading
-        if (inputHandler.keys.shoot && !this.isReloading && this.ammo > 0) {
+        // Check if player is shooting
+        if (inputHandler.keys.shoot) {
             // Start drawing the gun if it's holstered
             if (this.isGunHolstered) {
                 this.isGunHolstered = false;
@@ -321,25 +434,26 @@ export class Player {
             
             // Check if enough time has passed since last shot
             if (now - this.lastShotTime > this.fireRate) {
-                this.shoot();
-                this.lastShotTime = now;
+                if (!this.isReloading && this.ammo > 0) {
+                    this.shoot();
+                    this.lastShotTime = now;
+                } else if (!this.isReloading) {
+                    // Play dry fire sound when out of ammo - higher pitch for distinctive click
+                    this.audioManager.playSound('DRY_FIRE', 'F6');
+                    this.lastShotTime = now;
+                }
             }
         } else if (!inputHandler.keys.shoot && !this.isGunHolstered && this.gunDrawProgress >= 1) {
             // Holster the gun when not shooting and gun is fully drawn
             this.isGunHolstered = true;
         }
         
-        // Remove automatic reload - player must find ammo pickups
-        // if (this.ammo <= 0 && !this.isReloading) {
-        //     this.reload();
-        // }
-        
         // Handle grenade throwing
         if (inputHandler.keys.grenade && this.grenades > 0) {
             // Check cooldown
             if (now - this.lastGrenadeTime > this.grenadeRate) {
-                this.throwGrenade();
-                this.lastGrenadeTime = now;
+                // Don't actually throw the grenade here, just signal that we can throw
+                // Let the main game class handle the actual throwing via right-click
                 inputHandler.keys.grenade = false; // Reset to prevent multiple throws
             }
         }
@@ -453,27 +567,32 @@ export class Player {
     
     addAmmo(amount) {
         this.ammo = Math.min(this.maxAmmo, this.ammo + amount);
-        this.audioManager.playPickup();
+        this.audioManager.playPickup('ammo');
     }
     
     addEnergy(amount) {
         this.currentHealth = Math.min(this.maxHealth, this.currentHealth + amount);
         this.updateHealthBar();
-        this.audioManager.playPickup();
+        this.audioManager.playPickup('health');
     }
     
     addGrenades(amount) {
         this.grenades = Math.min(this.maxGrenades, this.grenades + amount);
-        this.audioManager.playPickup();
+        this.audioManager.playPickup('grenade');
     }
     
     throwGrenade() {
         if (this.isReloading || this.grenades <= 0) {
+            console.log("Can't throw grenade:", this.isReloading ? "reloading" : "no grenades left");
             return false;
         }
         
+        console.log("Throwing grenade, count before:", this.grenades);
+        
         // Reduce grenade count
         this.grenades--;
+        
+        console.log("Grenade count after:", this.grenades);
         
         // Set the last grenade time to current time
         this.lastGrenadeTime = Date.now();
@@ -491,6 +610,9 @@ export class Player {
         if (this.isMoving) {
             // Update bouncing animation (similar to enemies)
             this.updateBouncingAnimation(dt);
+            
+            // Play footstep sounds synced with animation
+            this.updateFootstepSounds(dt);
         } else {
             // Reset position when not moving
             this.resetAnimationState();
@@ -584,5 +706,23 @@ export class Player {
     // New method to check if player is out of ammo (for spawn manager)
     isOutOfAmmo() {
         return this.ammo <= 0;
+    }
+    
+    // Add footstep sound method
+    updateFootstepSounds(dt) {
+        // Only play footstep sounds if we have an audio manager
+        if (!this.audioManager) return;
+        
+        // Get step cycle position (0-1)
+        const stepCyclePosition = (this.jumpTime * Math.PI) % (2 * Math.PI);
+        
+        // Play footstep sound at the bottom of the step cycle (when foot hits ground)
+        // This happens twice per full cycle, at ~PI/2 and ~3PI/2
+        if ((Math.abs(stepCyclePosition - Math.PI/2) < 0.15) || 
+            (Math.abs(stepCyclePosition - 3*Math.PI/2) < 0.15)) {
+            
+            // Pass movement intensity to control volume/speed
+            this.audioManager.playFootstep(this.movementIntensity);
+        }
     }
 } 

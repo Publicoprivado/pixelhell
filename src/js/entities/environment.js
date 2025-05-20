@@ -133,7 +133,7 @@ export class Tree {
 }
 
 export class AmmoPack {
-    constructor(scene, position, audioManager) {
+    constructor(scene, position, audioManager, ammoAmount = 60) {
         this.scene = scene;
         this.audioManager = audioManager;
         this.position = position.clone();
@@ -142,7 +142,7 @@ export class AmmoPack {
         this.bounceSpeed = 3; // Faster bounce
         this.bounceHeight = 0.4; // Higher bounce
         this.bounceTime = Math.random() * Math.PI * 2; // Random starting phase
-        this.ammoAmount = 15; // Increased from 10 to 15
+        this.ammoAmount = ammoAmount; // Use the passed value (default 60)
         this.baseHeight = 0.5; // Base floating height above ground (increased from 0)
         
         this.createAmmoPack();
@@ -168,12 +168,39 @@ export class AmmoPack {
         const bulletGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.25, 8);
         const bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xffcc00 }); // Gold color
         
-        // Add bullets standing upright in the box
-        for (let i = 0; i < 3; i++) {
-            const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
-            bullet.rotation.x = Math.PI / 2; // Lay horizontally
-            bullet.position.set(-0.1 + i * 0.1, 0.2, 0); // Position on top of box
-            this.group.add(bullet);
+        // Scale number of visible bullets based on ammo amount
+        // At 60 ammo show 4 bullets, at 30 ammo show 2 bullets
+        const numBullets = Math.max(2, Math.floor(this.ammoAmount / 15));
+        
+        // Arrange bullets in a grid or line based on count
+        if (numBullets <= 3) {
+            // Line arrangement for fewer bullets
+            for (let i = 0; i < numBullets; i++) {
+                const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+                bullet.rotation.x = Math.PI / 2; // Lay horizontally
+                bullet.position.set(-0.1 + i * 0.1, 0.2, 0); // Position on top of box
+                this.group.add(bullet);
+            }
+        } else {
+            // Grid arrangement for more bullets
+            const cols = Math.ceil(Math.sqrt(numBullets));
+            const rows = Math.ceil(numBullets / cols);
+            let bulletCount = 0;
+            
+            for (let row = 0; row < rows && bulletCount < numBullets; row++) {
+                for (let col = 0; col < cols && bulletCount < numBullets; col++) {
+                    const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+                    bullet.rotation.x = Math.PI / 2; // Lay horizontally
+                    // Position in a grid on top of box
+                    bullet.position.set(
+                        -0.15 + col * 0.1, 
+                        0.2, 
+                        -0.1 + row * 0.1
+                    );
+                    this.group.add(bullet);
+                    bulletCount++;
+                }
+            }
         }
         
         // Add the group to the scene
@@ -206,7 +233,7 @@ export class AmmoPack {
         // Add text label with fixed position in screen space
         this.label = new TextLabel(
             this.scene, 
-            'AMMO', 
+            `AMMO ×${this.ammoAmount}`, // Show ammo amount in label
             this.position, 
             {
                 offset: new THREE.Vector3(0, 2.5, 0),

@@ -27,6 +27,7 @@ export class SpawnManager {
         this.enemyFireRateMultiplier = 1.0; // Base fire rate multiplier for wave 1
         this.enemiesSpawnedThisWave = 0; // Track how many enemies have been spawned in current wave
         this.waveComplete = false; // Flag to track if wave is complete
+        this.ammoPerPickup = 60; // Starting ammo per pickup
     }
     
     setObstacles(obstacles) {
@@ -192,8 +193,8 @@ export class SpawnManager {
             }
         }
         
-        // Create the ammo pack
-        const ammoPack = new AmmoPack(this.scene, position, this.audioManager);
+        // Create the ammo pack with wave-dependent ammo amount
+        const ammoPack = new AmmoPack(this.scene, position, this.audioManager, this.ammoPerPickup);
         
         // Add to collection and collision system
         this.ammoPickups.push(ammoPack);
@@ -322,6 +323,9 @@ export class SpawnManager {
         // Speed up spawn rate slightly (cap at 300ms minimum)
         this.spawnDelay = Math.max(300, GAME.SPAWN_DELAY - (this.waveNumber * 100));
         
+        // Reduce ammo per pickup amount by 10 for each wave until it reaches 30
+        this.ammoPerPickup = Math.max(30, 60 - ((this.waveNumber - 1) * 10));
+        
         // Reset counters for the new wave
         this.enemiesSpawnedThisWave = 0;
         this.waveComplete = false;
@@ -329,7 +333,7 @@ export class SpawnManager {
         // Display wave announcement with additional info
         this.showWaveMessage();
         
-        console.log(`Wave ${this.waveNumber}: ${this.maxEnemies} enemies, speed x${this.enemySpeedMultiplier.toFixed(1)}, fire rate x${this.enemyFireRateMultiplier.toFixed(1)}`);
+        console.log(`Wave ${this.waveNumber}: ${this.maxEnemies} enemies, speed x${this.enemySpeedMultiplier.toFixed(1)}, fire rate x${this.enemyFireRateMultiplier.toFixed(1)}, ammo per pickup: ${this.ammoPerPickup}`);
     }
     
     showWaveMessage() {
@@ -363,10 +367,25 @@ export class SpawnManager {
         waveInfo.textContent = `${this.maxEnemies} enemies - Speed x${this.enemySpeedMultiplier.toFixed(1)} - Fire Rate x${this.enemyFireRateMultiplier.toFixed(1)}`;
         document.body.appendChild(waveInfo);
         
+        // Create ammo info
+        const ammoInfo = document.createElement('div');
+        ammoInfo.style.position = 'absolute';
+        ammoInfo.style.top = '52%';
+        ammoInfo.style.left = '50%';
+        ammoInfo.style.transform = 'translate(-50%, -50%)';
+        ammoInfo.style.color = '#ffcc00'; // Gold color for ammo
+        ammoInfo.style.fontSize = '12px';
+        ammoInfo.style.fontFamily = '"Press Start 2P", cursive';
+        ammoInfo.style.textShadow = '2px 2px 4px black';
+        ammoInfo.style.zIndex = '1000';
+        ammoInfo.textContent = `Ammo per pickup: ${this.ammoPerPickup}`;
+        document.body.appendChild(ammoInfo);
+        
         // Remove after 2.5 seconds
         setTimeout(() => {
             document.body.removeChild(waveMsg);
             document.body.removeChild(waveInfo);
+            document.body.removeChild(ammoInfo);
         }, 2500);
     }
     

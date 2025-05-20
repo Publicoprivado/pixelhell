@@ -48,9 +48,9 @@ export const GAME = {
     BULLET_MAX_DISTANCE: 75,   // Maximum distance bullets can travel (also controls splats)
     GRENADE_EXPLOSION_RADIUS: 4, // Explosion radius
     GRENADE_EXPLOSION_DELAY: 2000, // Milliseconds before explosion
-    AMMO_COUNT: 15,            // Starting ammo (reduced from 30)
+    AMMO_COUNT: 90,            // Starting ammo (increased from 15 to 90)
     RELOAD_TIME: 1000,         // Milliseconds to reload
-    MAX_AMMO: 60,             // Maximum ammo capacity
+    MAX_AMMO: 120,             // Maximum ammo capacity (increased to accommodate more starting ammo)
     MAX_HEALTH: 100,           // Maximum player health
     MAX_ENERGY: 100,           // Maximum player energy
     ENERGY_AMOUNT: 20,         // Energy per pickup

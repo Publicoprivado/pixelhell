@@ -86,45 +86,67 @@ class Game {
         window.addEventListener('contextmenu', (e) => {
             e.preventDefault(); // Prevent the context menu
             
-            // Check debounce flag - if true, ignore this click
-            if (this.rightClickDebounce) {
-                return;
-            }
+            // Debug log
+            console.log("Right-click detected, attempting to throw grenade");
             
-            // Check timestamp-based interval protection as well
+            // Check for cooldown
             const now = Date.now();
             if (now - this.lastGrenadeThrowTime < this.grenadeThrowMinInterval) {
+                console.log("Grenade on cooldown, can't throw yet");
                 return;
             }
             
-            // Set debounce flag to prevent multiple grenades
-            this.rightClickDebounce = true;
-            
-            // Reset debounce flag after timeout
-            setTimeout(() => {
-                this.rightClickDebounce = false;
-            }, this.rightClickDebounceTime);
-            
-            // Only proceed if we have a player
-            if (this.player && this.player.grenades > 0) {
-                // Create the grenade directly
-                const grenade = this.createGrenade();
-                
-                if (grenade) {
-                    // Update lastGrenadeThrowTime for interval protection
-                    this.lastGrenadeThrowTime = now;
-                    
-                    // Update player state
-                    // Still update lastGrenadeTime but AFTER grenade is thrown
-                    this.player.lastGrenadeTime = now;
-                    
-                    // Apply throw animation
-                    this.player.body.scale.x = 1.2;
-                    setTimeout(() => {
-                        this.player.body.scale.x = 1;
-                    }, 100);
-                }
+            // Check if player exists and has grenades
+            if (!this.player || this.player.grenades <= 0) {
+                console.log("No player or no grenades left");
+                return;
             }
+            
+            console.log("Player has grenades, throwing now!");
+            
+            // Create the grenade directly
+            const grenadePosition = this.player.getPosition().clone();
+            grenadePosition.y = SIZES.PLAYER / 2; // Set grenade at player height
+            
+            // Get mouse target position for better aiming
+            const targetPosition = this.player.getMouseWorldPosition();
+            
+            // Calculate direction vector to target
+            let direction;
+            
+            // If we have a valid target position, aim at it
+            if (targetPosition && targetPosition.lengthSq() > 0) {
+                direction = new THREE.Vector3().subVectors(targetPosition, grenadePosition).normalize();
+                
+                // Keep direction parallel to ground
+                direction.y = 0;
+                direction.normalize();
+            } else {
+                // Fallback to player facing direction
+                direction = this.player.getDirection();
+            }
+            
+            // Decrease player's grenade count
+            this.player.grenades--;
+            
+            // Create the grenade
+            const grenade = new Grenade(this.scene, grenadePosition, direction, this.audioManager, this.decalManager);
+            this.grenades.push(grenade);
+            this.collisionSystem.addGrenade(grenade);
+            
+            console.log("Grenade thrown, remaining:", this.player.grenades);
+            
+            // Apply throw animation to player
+            this.player.body.scale.x = 1.2;
+            setTimeout(() => {
+                this.player.body.scale.x = 1;
+            }, 100);
+            
+            // Update timestamp for player cooldown
+            this.player.lastGrenadeTime = Date.now();
+            
+            // Update timestamp for interval protection
+            this.lastGrenadeThrowTime = Date.now();
         });
         
         // Start the game loop
@@ -419,56 +441,15 @@ class Game {
     }
     
     setupWorld() {
-        // Ground removed - using grey background instead
-        
         // Create obstacles for cover (avoiding central obstacle)
-        this.createObstacles();
+        this.createTrees();  // Trees are obstacles
+        this.createRocks();  // Large rocks are obstacles
         
-        // Create trees
-        this.createTrees();
-        
-        // Create new environment elements
-        this.createRocks();
+        // Create decorative elements (not obstacles)
+        this.createGrass();  // Add grass patches
         this.createFlowerPatches();
         this.createStumps();
         this.createSmallRocks();
-    }
-    
-    createObstacles() {
-        // Create obstacles away from the center
-        const obstaclePositions = [
-            // Original grass patches
-            new THREE.Vector3(-8, 0, 5),
-            new THREE.Vector3(8, 0, -5),
-            new THREE.Vector3(-5, 0, -8),
-            new THREE.Vector3(7, 0, 7),
-            new THREE.Vector3(-10, 0, -3),
-            new THREE.Vector3(3, 0, 10),
-            // Additional grass patches for more population
-            new THREE.Vector3(-12, 0, -5),
-            new THREE.Vector3(12, 0, 4),
-            new THREE.Vector3(-3, 0, 12),
-            new THREE.Vector3(5, 0, -12),
-            new THREE.Vector3(-15, 0, 3),
-            new THREE.Vector3(4, 0, 15),
-            // More patches spread around the field
-            new THREE.Vector3(-18, 0, -12),
-            new THREE.Vector3(16, 0, -14),
-            new THREE.Vector3(-2, 0, -16),
-            new THREE.Vector3(14, 0, 18),
-            new THREE.Vector3(-20, 0, 10),
-            new THREE.Vector3(20, 0, -8)
-        ];
-        
-        obstaclePositions.forEach(position => {
-            const width = 1 + Math.random() * 2;
-            const height = 0.5 + Math.random() * 1;
-            const depth = 1 + Math.random() * 2;
-            
-            const obstacle = new Obstacle(this.scene, position, width, height, depth);
-            this.obstacles.push(obstacle);
-            this.collisionSystem.addObstacle(obstacle);
-        });
     }
     
     createTrees() {
@@ -518,13 +499,14 @@ class Game {
         rockPositions.forEach(position => {
             const size = 0.8 + Math.random() * 1.5; // Random size between 0.8 and 2.3
             const rock = new Rock(this.scene, position, size);
+            // Add all rocks as obstacles, regardless of size
             this.obstacles.push(rock);
             this.collisionSystem.addObstacle(rock);
         });
     }
     
     createFlowerPatches() {
-        // Create flower patches
+        // Create flower patches (decorative, not obstacles)
         const flowerPositions = [
             new THREE.Vector3(-15, 0, 0),
             new THREE.Vector3(12, 0, 8),
@@ -537,13 +519,12 @@ class Game {
         flowerPositions.forEach(position => {
             const size = 1 + Math.random() * 1; // Random size between 1 and 2
             const flowerPatch = new FlowerPatch(this.scene, position, size);
-            this.obstacles.push(flowerPatch);
-            this.collisionSystem.addObstacle(flowerPatch);
+            // Don't add to obstacles or collision system
         });
     }
     
     createStumps() {
-        // Create stumps
+        // Create stumps (decorative, not obstacles)
         const stumpPositions = [
             new THREE.Vector3(-10, 0, -15),
             new THREE.Vector3(15, 0, 12),
@@ -555,13 +536,12 @@ class Game {
         stumpPositions.forEach(position => {
             const size = 1 + Math.random(); // Random size between 1 and 2
             const stump = new Stump(this.scene, position, size);
-            this.obstacles.push(stump);
-            this.collisionSystem.addObstacle(stump);
+            // Don't add to obstacles or collision system
         });
     }
     
     createSmallRocks() {
-        // Create clusters of small rocks
+        // Create clusters of small rocks (decorative, not obstacles)
         const smallRockPositions = [
             new THREE.Vector3(5, 0, 18),
             new THREE.Vector3(-22, 0, -5),
@@ -578,8 +558,44 @@ class Game {
         smallRockPositions.forEach(position => {
             const size = 0.8 + Math.random() * 0.7; // Random size between 0.8 and 1.5
             const smallRocks = new SmallRocks(this.scene, position, size);
+            // Add small rocks as obstacles
             this.obstacles.push(smallRocks);
             this.collisionSystem.addObstacle(smallRocks);
+        });
+    }
+    
+    createGrass() {
+        // Create grass patches throughout the arena
+        const grassPositions = [
+            // Outer ring
+            new THREE.Vector3(-18, 0, 18),
+            new THREE.Vector3(0, 0, 20),
+            new THREE.Vector3(18, 0, 18),
+            new THREE.Vector3(20, 0, 0),
+            new THREE.Vector3(18, 0, -18),
+            new THREE.Vector3(0, 0, -20),
+            new THREE.Vector3(-18, 0, -18),
+            new THREE.Vector3(-20, 0, 0),
+            // Inner patches
+            new THREE.Vector3(-8, 0, 8),
+            new THREE.Vector3(8, 0, 8),
+            new THREE.Vector3(8, 0, -8),
+            new THREE.Vector3(-8, 0, -8),
+            // Random scattered patches
+            new THREE.Vector3(-12, 0, 4),
+            new THREE.Vector3(12, 0, -4),
+            new THREE.Vector3(4, 0, 12),
+            new THREE.Vector3(-4, 0, -12),
+            new THREE.Vector3(-15, 0, -10),
+            new THREE.Vector3(15, 0, 10),
+            new THREE.Vector3(10, 0, 15),
+            new THREE.Vector3(-10, 0, -15)
+        ];
+
+        grassPositions.forEach(position => {
+            const size = 1 + Math.random() * 0.5; // Random size between 1 and 1.5
+            const grass = new Obstacle(this.scene, position, size, size * 0.8, size);
+            // Don't add grass as obstacles (decorative only)
         });
     }
     
@@ -620,7 +636,13 @@ class Game {
     }
     
     createGrenade() {
-        if (!this.player) return;
+        if (!this.player) return null;
+        
+        // Strict check for grenades
+        if (this.player.grenades <= 0) {
+            console.log("Cannot create grenade: no grenades left");
+            return null;
+        }
         
         // Get player position and direction
         const position = this.player.getPosition().clone();
@@ -733,21 +755,52 @@ class Game {
                 }
             }
             
-            // Handle grenade throwing
+            // Handle grenade throwing - now only used for keyboard grenade throwing (g key)
             if (this.inputHandler.keys.grenade) {
-                // Check if enough time has passed since last grenade
-                if (Date.now() - this.player.lastGrenadeTime > this.player.grenadeRate) {
-                    // Check if we have grenades left and try to throw
-                    if (this.player.grenades > 0) {
-                        // Create the grenade if the player successfully threw it
-                        if (this.player.throwGrenade()) {
-                            const grenade = this.createGrenade();
-                            
-                            // Reset the grenade key to prevent multiple throws
-                            this.inputHandler.keys.grenade = false;
-                        }
-                    }
+                console.log("Keyboard grenade key detected");
+                
+                // Check for cooldown
+                const now = Date.now();
+                if (now - this.lastGrenadeThrowTime < this.grenadeThrowMinInterval) {
+                    console.log("Grenade on cooldown, can't throw yet");
+                    this.inputHandler.keys.grenade = false;
+                    return;
                 }
+                
+                // Check if we have grenades left
+                if (this.player.grenades > 0) {
+                    console.log("Player has grenades, throwing via keyboard");
+                    
+                    // Create the grenade
+                    const grenadePosition = this.player.getPosition().clone();
+                    grenadePosition.y = SIZES.PLAYER / 2;
+                    
+                    // Use player's facing direction
+                    const direction = this.player.getDirection();
+                    
+                    // Decrease player's grenade count
+                    this.player.grenades--;
+                    
+                    // Create the grenade
+                    const grenade = new Grenade(this.scene, grenadePosition, direction, this.audioManager, this.decalManager);
+                    this.grenades.push(grenade);
+                    this.collisionSystem.addGrenade(grenade);
+                    
+                    console.log("Grenade thrown via keyboard, remaining:", this.player.grenades);
+                    
+                    // Apply throw animation
+                    this.player.body.scale.x = 1.2;
+                    setTimeout(() => {
+                        this.player.body.scale.x = 1;
+                    }, 100);
+                    
+                    // Update timestamps
+                    this.player.lastGrenadeTime = now;
+                    this.lastGrenadeThrowTime = now;
+                }
+                
+                // Reset the grenade key regardless
+                this.inputHandler.keys.grenade = false;
             }
         }
         
@@ -837,7 +890,7 @@ window.addEventListener('DOMContentLoaded', () => {
     startContainer.style.left = '0';
     startContainer.style.width = '100%';
     startContainer.style.height = '100%';
-    startContainer.style.backgroundColor = '#222222';
+    startContainer.style.backgroundColor = '#222222'; // Match game background
     startContainer.style.display = 'flex';
     startContainer.style.flexDirection = 'column';
     startContainer.style.alignItems = 'center';
@@ -845,48 +898,116 @@ window.addEventListener('DOMContentLoaded', () => {
     startContainer.style.zIndex = '1000';
     startContainer.style.cursor = 'default';
     startContainer.style.fontFamily = '"Press Start 2P", cursive';
-    
-    // Add title
+
+    // Add character preview container
+    const characterPreview = document.createElement('div');
+    characterPreview.style.width = '32px';
+    characterPreview.style.height = '32px';
+    characterPreview.style.backgroundColor = '#4444ff';
+    characterPreview.style.marginBottom = '40px';
+    characterPreview.style.transform = 'scale(0)';
+    characterPreview.style.transition = 'transform 0.3s ease-out';
+    characterPreview.style.borderRadius = '4px';
+    characterPreview.style.boxShadow = 'inset -4px -4px 0px 0px #2222aa';
+    startContainer.appendChild(characterPreview);
+
+    // Add title with pixel art shadow
     const gameTitle = document.createElement('div');
     gameTitle.textContent = 'PIXEL HELL';
     gameTitle.style.color = '#ffffff';
     gameTitle.style.fontSize = '48px';
     gameTitle.style.marginBottom = '50px';
     gameTitle.style.textShadow = '4px 4px 0px #000000';
+    gameTitle.style.opacity = '0';
+    gameTitle.style.transform = 'translateY(-20px)';
+    gameTitle.style.transition = 'opacity 0.5s ease-out, transform 0.5s ease-out';
     startContainer.appendChild(gameTitle);
-    
+
+    // Trigger title animation after a short delay
+    setTimeout(() => {
+        gameTitle.style.opacity = '1';
+        gameTitle.style.transform = 'translateY(0)';
+        // Show character preview with bounce effect
+        setTimeout(() => {
+            characterPreview.style.transform = 'scale(1.2)';
+            setTimeout(() => {
+                characterPreview.style.transform = 'scale(1)';
+            }, 150);
+        }, 500);
+    }, 100);
+
     // Create pixel art style button
     const startButton = document.createElement('button');
     startButton.textContent = 'START GAME';
     startButton.style.fontSize = '16px';
-    startButton.style.padding = '20px 40px';
-    startButton.style.backgroundColor = '#00ff00';
-    startButton.style.color = '#000000';
-    startButton.style.border = '4px solid #ffffff';
+    startButton.style.padding = '16px 32px';
+    startButton.style.backgroundColor = '#00aa00';
+    startButton.style.color = '#ffffff';
+    startButton.style.border = 'none';
     startButton.style.cursor = 'pointer';
-    startButton.style.imageRendering = 'pixelated';
+    startButton.style.fontFamily = '"Press Start 2P", cursive';
+    startButton.style.position = 'relative';
     startButton.style.textTransform = 'uppercase';
     startButton.style.letterSpacing = '2px';
-    startButton.style.boxShadow = '4px 4px 0px #000000';
-    startButton.style.transition = 'transform 0.1s, box-shadow 0.1s';
+    startButton.style.imageRendering = 'pixelated';
+    startButton.style.boxShadow = 'inset -4px -4px 0px 0px #006600';
+    startButton.style.outline = 'none';
+    
+    // Create pixel art border
+    startButton.style.border = '4px solid #ffffff';
+    startButton.style.borderStyle = 'solid';
+    startButton.style.borderWidth = '4px';
+    startButton.style.borderLeftColor = '#ffffff';
+    startButton.style.borderTopColor = '#ffffff';
+    startButton.style.borderRightColor = '#888888';
+    startButton.style.borderBottomColor = '#888888';
     
     // Add hover and active states
     startButton.onmouseover = () => {
-        startButton.style.backgroundColor = '#00dd00';
+        startButton.style.backgroundColor = '#00cc00';
+        startButton.style.boxShadow = 'inset -4px -4px 0px 0px #008800';
     };
+    
     startButton.onmouseout = () => {
-        startButton.style.backgroundColor = '#00ff00';
+        startButton.style.backgroundColor = '#00aa00';
+        startButton.style.boxShadow = 'inset -4px -4px 0px 0px #006600';
         startButton.style.transform = 'translate(0, 0)';
-        startButton.style.boxShadow = '4px 4px 0px #000000';
+        startButton.style.borderLeftColor = '#ffffff';
+        startButton.style.borderTopColor = '#ffffff';
+        startButton.style.borderRightColor = '#888888';
+        startButton.style.borderBottomColor = '#888888';
     };
+    
     startButton.onmousedown = () => {
-        startButton.style.transform = 'translate(4px, 4px)';
-        startButton.style.boxShadow = '0px 0px 0px #000000';
+        startButton.style.transform = 'translate(2px, 2px)';
+        startButton.style.backgroundColor = '#008800';
+        startButton.style.boxShadow = 'inset -2px -2px 0px 0px #004400';
+        startButton.style.borderLeftColor = '#888888';
+        startButton.style.borderTopColor = '#888888';
+        startButton.style.borderRightColor = '#ffffff';
+        startButton.style.borderBottomColor = '#ffffff';
     };
+    
     startButton.onmouseup = () => {
         startButton.style.transform = 'translate(0, 0)';
-        startButton.style.boxShadow = '4px 4px 0px #000000';
+        startButton.style.backgroundColor = '#00aa00';
+        startButton.style.boxShadow = 'inset -4px -4px 0px 0px #006600';
+        startButton.style.borderLeftColor = '#ffffff';
+        startButton.style.borderTopColor = '#ffffff';
+        startButton.style.borderRightColor = '#888888';
+        startButton.style.borderBottomColor = '#888888';
     };
+    
+    // Add pixel art shadow behind button
+    const buttonShadow = document.createElement('div');
+    buttonShadow.style.position = 'absolute';
+    buttonShadow.style.top = '4px';
+    buttonShadow.style.left = '4px';
+    buttonShadow.style.width = '100%';
+    buttonShadow.style.height = '100%';
+    buttonShadow.style.backgroundColor = '#000000';
+    buttonShadow.style.zIndex = '-1';
+    startContainer.appendChild(buttonShadow);
     
     startContainer.appendChild(startButton);
     document.body.appendChild(startContainer);
@@ -897,11 +1018,131 @@ window.addEventListener('DOMContentLoaded', () => {
             // Start audio context
             await Tone.start();
             
-            // Remove the start screen
-            document.body.removeChild(startContainer);
+            // Play 3-note startup sound
+            const synth = new Tone.Synth({
+                oscillator: {
+                    type: "square" // 8-bit sound
+                },
+                envelope: {
+                    attack: 0.01,
+                    decay: 0.2,
+                    sustain: 0.2,
+                    release: 0.2
+                }
+            }).toDestination();
             
-            // Initialize the game and expose it globally
-            window.gameInstance = new Game();
+            // Play ascending notes with slight delay
+            synth.triggerAttackRelease("C4", "8n");
+            setTimeout(() => synth.triggerAttackRelease("E4", "8n"), 150);
+            setTimeout(() => synth.triggerAttackRelease("G4", "8n"), 300);
+            
+            // Animate elements out
+            gameTitle.style.opacity = '0';
+            gameTitle.style.transform = 'translateY(-20px)';
+            startButton.style.opacity = '0';
+            startButton.style.transform = 'translateY(20px)';
+            characterPreview.style.transform = 'scale(1.5)';
+            characterPreview.style.opacity = '0';
+            
+            // Wait for animations to complete
+            setTimeout(() => {
+                // Remove the start screen
+                document.body.removeChild(startContainer);
+                
+                // Initialize the game and expose it globally
+                window.gameInstance = new Game();
+                
+                // Add character entrance animation - falling from sky
+                if (window.gameInstance.player) {
+                    const player = window.gameInstance.player;
+                    
+                    // Disable player control until animation completes
+                    player.controlsEnabled = false;
+                    
+                    // Start player high in the sky
+                    player.group.position.set(0, 30, 5);
+                    player.group.scale.set(1, 1, 1);
+                    
+                    // Physics parameters
+                    let velocity = 0;
+                    const gravity = 0.08;
+                    const bounceCoefficient = 0.6;
+                    let isGrounded = false;
+                    let bounceCount = 0;
+                    const maxBounces = 3;
+                    
+                    // Animate player falling and bouncing
+                    function animatePlayerFall() {
+                        // Apply gravity
+                        velocity += gravity;
+                        player.group.position.y -= velocity;
+                        
+                        // Check for ground collision
+                        if (player.group.position.y <= 0 && !isGrounded) {
+                            // Bounce effect
+                            player.group.position.y = 0;
+                            velocity = -velocity * bounceCoefficient;
+                            
+                            // Flatten a bit on impact
+                            player.group.scale.set(1.2, 0.8, 1.2);
+                            setTimeout(() => {
+                                player.group.scale.set(1, 1, 1);
+                            }, 100);
+                            
+                            // Play a landing sound
+                            const landingSound = new Tone.Synth({
+                                oscillator: { type: "square" },
+                                envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 }
+                            }).toDestination();
+                            landingSound.volume.value = -10;
+                            landingSound.triggerAttackRelease(240 - (bounceCount * 40), "16n");
+                            
+                            bounceCount++;
+                            
+                            // Stop bouncing after a few bounces
+                            if (bounceCount >= maxBounces || Math.abs(velocity) < 0.3) {
+                                isGrounded = true;
+                                player.group.position.y = 0;
+                                
+                                // Small wobble effect to show landing complete
+                                setTimeout(() => {
+                                    player.group.scale.set(0.95, 1.05, 0.95);
+                                    setTimeout(() => {
+                                        player.group.scale.set(1, 1, 1);
+                                        
+                                        // Enable player control after animation completes
+                                        setTimeout(() => {
+                                            player.controlsEnabled = true;
+                                            
+                                            // Play a "ready" sound
+                                            const readySound = new Tone.Synth({
+                                                oscillator: { type: "square" },
+                                                envelope: { attack: 0.001, decay: 0.1, sustain: 0.1, release: 0.2 }
+                                            }).toDestination();
+                                            readySound.volume.value = -15;
+                                            
+                                            // Play a short ascending arpeggio
+                                            readySound.triggerAttackRelease("C4", "16n");
+                                            setTimeout(() => readySound.triggerAttackRelease("E4", "16n"), 100);
+                                            setTimeout(() => readySound.triggerAttackRelease("G4", "16n"), 200);
+                                            setTimeout(() => readySound.triggerAttackRelease("C5", "8n"), 300);
+                                        }, 300);
+                                    }, 100);
+                                }, 100);
+                                
+                                return;
+                            }
+                        }
+                        
+                        if (!isGrounded) {
+                            requestAnimationFrame(animatePlayerFall);
+                        }
+                    }
+                    
+                    // Start the animation
+                    animatePlayerFall();
+                }
+            }, 500);
         } catch (error) {
             console.error("Error starting game:", error);
         }

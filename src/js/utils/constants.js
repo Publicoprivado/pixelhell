@@ -62,7 +62,7 @@ export const GAME = {
 export const SOUNDS = {
     GUNSHOT: {
         type: 'hihat',
-        options: { volume: -4 }
+        options: { volume: -18 }
     },
     EXPLOSION: {
         type: 'tom',

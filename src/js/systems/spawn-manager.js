@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import { Enemy } from '../entities/enemy.js';
+import { Enemy, EnemyPool } from '../entities/enemy.js';
 import { AmmoPack, EnergyPack } from '../entities/environment.js';
 import { GAME, COLORS } from '../utils/constants.js';
 import { TextLabel } from '../utils/text-label.js';
+import { GrenadePool } from '../entities/projectiles.js';
 
 export class SpawnManager {
     constructor(scene, player, collisionSystem, audioManager, decalManager) {
@@ -28,6 +29,10 @@ export class SpawnManager {
         this.enemiesSpawnedThisWave = 0; // Track how many enemies have been spawned in current wave
         this.waveComplete = false; // Flag to track if wave is complete
         this.ammoPerPickup = 60; // Starting ammo per pickup
+        
+        // Initialize object pools
+        this.enemyPool = new EnemyPool(scene, this);
+        this.grenadePool = new GrenadePool(scene, audioManager, decalManager);
     }
     
     setObstacles(obstacles) {
@@ -109,13 +114,8 @@ export class SpawnManager {
     }
     
     updateEnemies(dt) {
-        this.activeEnemies = this.activeEnemies.filter(enemy => {
-            if (!enemy.isActive) return false;
-            
-            // Pass the actual delta time and player position
-            enemy.update(dt, this.player.getPosition());
-            return true;
-        });
+        // Use the enemy pool's update method instead
+        this.activeEnemies = this.enemyPool.update(dt, this.player.getPosition());
     }
     
     updateEnemyBullets(dt) {
@@ -149,8 +149,8 @@ export class SpawnManager {
             type = 'THIN';
         }
         
-        // Create the enemy and pass the spawn manager
-        const enemy = new Enemy(this.scene, position, type, this);
+        // Use the enemy pool to get an enemy
+        const enemy = this.enemyPool.getEnemy(position, type);
         
         // Apply wave speed multiplier to enemy
         if (enemy.speed) {
@@ -168,9 +168,6 @@ export class SpawnManager {
         
         // Increment enemy count
         this.enemyCount++;
-        
-        // Add to active enemies
-        this.activeEnemies.push(enemy);
         
         return enemy;
     }
@@ -416,6 +413,55 @@ export class SpawnManager {
                 document.body.removeChild(hintMsg);
             }
         }, 2500);
+    }
+    
+    // Method to get a grenade from the pool
+    getGrenade(position, direction) {
+        return this.grenadePool.getGrenade(position, direction);
+    }
+    
+    // Update the grenade pool
+    updateGrenades(dt) {
+        this.grenadePool.update(dt);
+    }
+    
+    // Add cleanup method for memory management
+    cleanup() {
+        // Clean up object pools
+        if (this.enemyPool) this.enemyPool.cleanup();
+        if (this.grenadePool) this.grenadePool.cleanup();
+        
+        // Clean up pickups
+        this.ammoPickups.forEach(pickup => {
+            if (pickup.mesh) {
+                this.scene.remove(pickup.mesh);
+                pickup.mesh.geometry.dispose();
+                pickup.mesh.material.dispose();
+            }
+        });
+        
+        this.energyPickups.forEach(pickup => {
+            if (pickup.mesh) {
+                this.scene.remove(pickup.mesh);
+                pickup.mesh.geometry.dispose();
+                pickup.mesh.material.dispose();
+            }
+        });
+        
+        this.grenadePickups.forEach(pickup => {
+            if (pickup.mesh) {
+                this.scene.remove(pickup.mesh);
+                pickup.mesh.geometry.dispose();
+                pickup.mesh.material.dispose();
+            }
+        });
+        
+        // Clear arrays
+        this.ammoPickups = [];
+        this.energyPickups = [];
+        this.grenadePickups = [];
+        this.activeEnemies = [];
+        this.enemyBullets = [];
     }
 }
 

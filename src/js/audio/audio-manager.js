@@ -76,7 +76,7 @@ export class AudioManager {
                 sustain: 0,   // No sustain for cleaner sound
                 release: 0.1  // Quick release
             },
-            volume: -12
+            volume: -74  // Lower volume from -12 to -18
         }).toDestination();
         
         // Create 8-bit explosion synth
@@ -138,7 +138,7 @@ export class AudioManager {
         }).toDestination();
         
         // Set initial volume very low to prevent audio spikes
-        this.hihat.volume.value = -12;  // Increased from -20 for louder gunshots
+        this.hihat.volume.value = -28;  // Increased from -20 for louder gunshots
         this.tom.volume.value = -20;
         this.ping.volume.value = -15;
         this.click.volume.value = -20;
@@ -216,8 +216,8 @@ export class AudioManager {
     }
     
     playGunshot(pitchModifier = 1.0) {
-        // Use D5 for a more natural sound
-        const basePitch = 'D5';
+        // Use A3 for a lower, less piercing sound (was D5)
+        const basePitch = 'A3';
         this.playSound('GUNSHOT', basePitch, pitchModifier);
     }
     

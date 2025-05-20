@@ -277,32 +277,72 @@ export class Grenade {
         this.lastBounceTime = 0;
         this.bounceThreshold = 300; // minimum ms between bounce sounds
         
+        // Will hold shared resources from the pool
+        this.sharedGeometries = null;
+        this.sharedMaterials = null;
+        
+        // Track created objects for cleanup
+        this.meshes = [];
+        this.lights = [];
+        this.trailParticles = [];
+        this.debrisParticles = [];
+        this.animationIds = [];
+        
         // Create the actual grenade mesh
         this.createGrenadeMesh();
     }
     
+    // New method to reset a pooled grenade
+    reset(position, direction) {
+        // Reset position and direction
+        this.position = position.clone();
+        this.position.y += 0.5; // Start above the player's hand
+        this.initialPosition = position.clone();
+        this.direction = direction.clone().normalize();
+        
+        // Reset state
+        this.isActive = true;
+        this.hasExploded = false;
+        this.explosionActive = false;
+        this.throwTime = performance.now();
+        
+        // Reset physics
+        this.speed = GAME.SPEEDS.GRENADE;
+        this.verticalVelocity = this.throwStrength * 0.3;
+        this.lastBounceTime = 0;
+        
+        // Clean up any existing objects and animations
+        this.cleanupObjects(false);
+        
+        // Create a new mesh
+        this.createGrenadeMesh();
+        
+        return this;
+    }
+    
     createGrenadeMesh() {
-        // Use a more grenade-like shape but smaller
-        const size = 0.3; // Reduced size (was 0.8) for less oversized grenade
-        // Use dodecahedron for more grenade-like shape
-        const geometry = new THREE.DodecahedronGeometry(size, 0);
-        const material = new THREE.MeshPhongMaterial({ 
-            color: 0xff3300, // Bright orange-red for better visibility
-            emissive: 0xff2200, // Bright emissive color
+        // Use shared geometry and material if available
+        const geometry = this.sharedGeometries ? this.sharedGeometries.grenade : new THREE.DodecahedronGeometry(0.3, 0);
+        const material = this.sharedMaterials ? this.sharedMaterials.grenade : new THREE.MeshPhongMaterial({ 
+            color: 0xff3300,
+            emissive: 0xff2200,
             shininess: 80
         });
+        
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.position.copy(this.position);
         
         // Start higher off the ground for better visibility
-        this.mesh.position.y = Math.max(this.mesh.position.y, size + 0.3); // Reduced height
+        this.mesh.position.y = Math.max(this.mesh.position.y, 0.3 + 0.3); // Reduced height
         
         this.scene.add(this.mesh);
+        this.meshes.push(this.mesh);
         
         // Add a small light
         this.light = new THREE.PointLight(0xff5500, 2, 5); // Reduced intensity and radius
         this.light.position.copy(this.position);
         this.scene.add(this.light);
+        this.lights.push(this.light);
         
         // Create a trail effect with particles
         this.createTrailEffect();
@@ -311,34 +351,41 @@ export class Grenade {
     createTrailEffect() {
         // Particle system for trail effect
         this.trailParticles = [];
-        this.maxTrailParticles = 12; // Reduced from 20
-        this.trailUpdateRate = 50; // Faster updates for smoother trail
+        this.maxTrailParticles = 6; // Reduced from 12 for less memory impact
+        this.trailUpdateRate = 100; // Slower updates (was 50)
         this.lastTrailUpdate = performance.now();
         
-        // Create initial particles
+        // Only create a few particles for the trail
+        const particleGeometry = this.sharedGeometries ? 
+            this.sharedGeometries.particle : 
+            new THREE.SphereGeometry(0.15, 4, 4); // Reduced segments
+        
+        const particleMaterial = this.sharedMaterials ? 
+            this.sharedMaterials.trailParticle : 
+            new THREE.MeshBasicMaterial({
+                color: 0xff5500,
+                transparent: true,
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending
+            });
+        
+        // Pre-create all particles but keep them invisible
         for (let i = 0; i < this.maxTrailParticles; i++) {
-            const particle = new THREE.Mesh(
-                new THREE.SphereGeometry(0.15, 4, 4),
-                new THREE.MeshBasicMaterial({
-                    color: 0xff5500,
-                    transparent: true,
-                    opacity: 0.8,
-                    blending: THREE.AdditiveBlending
-                })
-            );
+            // Reuse material for all particles
+            const particle = new THREE.Mesh(particleGeometry, particleMaterial);
             
             // Hide initially
             particle.visible = false;
             particle.userData = {
                 active: false,
                 age: 0,
-                maxAge: 500, // Reduced lifetime for faster fading
+                maxAge: 500, // Shorter lifetime
                 startOpacity: 0.8,
                 startScale: 0.8,
-                endScale: 0.2 // Will shrink as it fades
+                endScale: 0.2
             };
             
-            this.scene.remove(particle);
+            // Add to scene
             this.scene.add(particle);
             this.trailParticles.push(particle);
         }
@@ -349,7 +396,7 @@ export class Grenade {
 
         const now = performance.now();
         
-        // Only update trail on a schedule to avoid performance issues
+        // Only update trail occasionally to avoid performance issues
         if (now - this.lastTrailUpdate > this.trailUpdateRate) {
             this.lastTrailUpdate = now;
             
@@ -384,10 +431,13 @@ export class Grenade {
             }
         }
         
-        // Update all active particles every frame for smooth fading
-        const dt = 16;
+        // Batch update active particles for better performance
+        const dt = 16; // Fixed time step
+        let activeCount = 0;
+        
         for (const particle of this.trailParticles) {
             if (particle.userData.active) {
+                activeCount++;
                 particle.userData.age += dt;
                 
                 // Fade out based on age
@@ -398,14 +448,17 @@ export class Grenade {
                     particle.userData.active = false;
                     particle.visible = false;
                 } else {
-                    // Smooth fade out with easing
-                    const fadeRatio = 1 - (lifeRatio * lifeRatio); // Quadratic easing
-                    particle.material.opacity = particle.userData.startOpacity * fadeRatio;
-                    
-                    // Smoothly scale down
-                    const scale = particle.userData.startScale + 
-                        (particle.userData.endScale - particle.userData.startScale) * lifeRatio;
-                    particle.scale.setScalar(scale);
+                    // Update every other frame for better performance
+                    if (Math.floor(particle.userData.age / 32) % 2 === 0) {
+                        // Smooth fade out with easing
+                        const fadeRatio = 1 - (lifeRatio * lifeRatio); // Quadratic easing
+                        particle.material.opacity = particle.userData.startOpacity * fadeRatio;
+                        
+                        // Smoothly scale down
+                        const scale = particle.userData.startScale + 
+                            (particle.userData.endScale - particle.userData.startScale) * lifeRatio;
+                        particle.scale.setScalar(scale);
+                    }
                 }
             }
         }
@@ -559,10 +612,11 @@ export class Grenade {
         explosionLight.position.copy(this.position);
         explosionLight.position.y = this.explosionRadius * 0.4;
         this.scene.add(explosionLight);
+        this.lights.push(explosionLight);
         
-        // Create a shockwave ring
-        const ringGeometry = new THREE.RingGeometry(0.08, 0.4, 8); // Reduced segments
-        const ringMaterial = new THREE.MeshBasicMaterial({
+        // Create a shockwave ring - use shared geometry if available
+        const ringGeometry = this.sharedGeometries ? this.sharedGeometries.ring : new THREE.RingGeometry(0.08, 0.4, 8);
+        const ringMaterial = this.sharedMaterials ? this.sharedMaterials.explosion : new THREE.MeshBasicMaterial({
             color: 0x9B870C,
             transparent: true,
             opacity: 1.0,
@@ -575,15 +629,19 @@ export class Grenade {
         ring.position.y = 0.1;
         ring.rotation.x = Math.PI / 2;
         this.scene.add(ring);
+        this.meshes.push(ring);
         
-        // Create particle effect with fewer particles
-        const particleCount = 30; // Reduced from 40
+        // Reduce particle count significantly
+        const particleCount = 15; // Reduced from 30
         const particles = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
         
+        // Use a smaller radius for particles
+        const explosionRadius = this.explosionRadius * 0.7;
+        
         for (let i = 0; i < particleCount; i++) {
-            const radius = Math.random() * this.explosionRadius * 0.8;
+            const radius = Math.random() * explosionRadius;
             const theta = Math.random() * Math.PI * 2;
             const phi = Math.random() * Math.PI;
             
@@ -610,6 +668,7 @@ export class Grenade {
         
         const particleSystem = new THREE.Points(particles, particleMaterial);
         this.scene.add(particleSystem);
+        this.meshes.push(particleSystem);
         
         // Animate the explosion with optimized timing
         let explosionTime = 0;
@@ -631,7 +690,7 @@ export class Grenade {
                 ring.scale.setScalar(ringScale);
                 ringMaterial.opacity = (1 - progress * 1.2) * 0.7;
                 
-                // Update particles less frequently
+                // Update particles less frequently - every 2 frames
                 if (explosionTime % 32 === 0) {
                     const positions = particles.attributes.position.array;
                     for (let i = 0; i < particleCount; i++) {
@@ -652,39 +711,57 @@ export class Grenade {
                 
                 particleMaterial.opacity = 1 - progress;
                 
-                requestAnimationFrame(animateExplosion);
+                const animId = requestAnimationFrame(animateExplosion);
+                this.animationIds.push(animId);
             } else {
                 // Cleanup
                 this.scene.remove(explosionLight);
                 this.scene.remove(particleSystem);
                 this.scene.remove(ring);
                 
-                particles.dispose();
-                particleMaterial.dispose();
-                ringGeometry.dispose();
-                ringMaterial.dispose();
+                // Remove from our tracking arrays
+                const lightIndex = this.lights.indexOf(explosionLight);
+                if (lightIndex !== -1) this.lights.splice(lightIndex, 1);
+                
+                const particleIndex = this.meshes.indexOf(particleSystem);
+                if (particleIndex !== -1) this.meshes.splice(particleIndex, 1);
+                
+                const ringIndex = this.meshes.indexOf(ring);
+                if (ringIndex !== -1) this.meshes.splice(ringIndex, 1);
+                
+                // Only dispose if we created the geometries ourselves
+                if (!this.sharedGeometries) {
+                    particles.dispose();
+                    if (!this.sharedMaterials) {
+                        particleMaterial.dispose();
+                        if (ringMaterial !== this.sharedMaterials?.explosion) {
+                            ringMaterial.dispose();
+                        }
+                    }
+                }
             }
         };
         
-        animateExplosion();
+        const animId = requestAnimationFrame(animateExplosion);
+        this.animationIds.push(animId);
     }
     
     createDebrisEffect() {
-        // Increase debris count for more noticeable effect
-        const debrisCount = 12; // Increased from 8
+        // Reduce debris count
+        const debrisCount = 8; // Reduced from 12
         this.debrisParticles = [];
         
-        // Cache geometries and materials for reuse
-        const debrisGeometries = {
+        // Get shared geometries if available
+        const debrisGeometries = this.sharedGeometries ? this.sharedGeometries.debris : {
             shard: new THREE.ConeGeometry(0.2, 0.8, 3),
             chunk: new THREE.DodecahedronGeometry(0.3, 0),
             splinter: new THREE.BoxGeometry(0.1, 0.6, 0.1),
             plate: new THREE.BoxGeometry(0.4, 0.1, 0.4),
-            miniGrenade: new THREE.SphereGeometry(0.15, 6, 6) // Add mini grenade-like debris
+            miniGrenade: new THREE.SphereGeometry(0.15, 6, 6)
         };
         
-        // Create materials with more grenade-like colors
-        const debrisMaterial = new THREE.MeshPhongMaterial({
+        // Get shared materials if available
+        const debrisMaterial = this.sharedMaterials ? this.sharedMaterials.debris1 : new THREE.MeshPhongMaterial({
             color: 0x9B870C,
             emissive: 0x9B870C,
             emissiveIntensity: 0.3,
@@ -692,9 +769,8 @@ export class Grenade {
             flatShading: true
         });
         
-        // Add a second material variant for visual variety
-        const debrisMaterial2 = new THREE.MeshPhongMaterial({
-            color: 0x777777, // Dark metal color
+        const debrisMaterial2 = this.sharedMaterials ? this.sharedMaterials.debris2 : new THREE.MeshPhongMaterial({
+            color: 0x777777,
             emissive: 0x444444,
             emissiveIntensity: 0.1,
             shininess: 60,
@@ -749,16 +825,16 @@ export class Grenade {
                     Math.random() - 0.5,
                     Math.random() - 0.5
                 ).normalize(),
-                rotationSpeed: Math.random() * 0.3 + 0.1,
+                rotationSpeed: Math.random() * 0.2 + 0.1,
+                bounceAmount: 0.4 + Math.random() * 0.3,
+                elasticity: 0.7 + Math.random() * 0.2, // Initial elasticity
+                spinDecay: 0.97 + Math.random() * 0.02, // Spin slowdown factor
+                gravity: 0.015 + Math.random() * 0.01,
                 bounceCount: 0,
-                maxBounces: Math.floor(Math.random() * 3) + 2, // Random 2-4 bounces
-                settled: false,
-                spinDecay: 0.95,
-                elasticity: 0.6 + Math.random() * 0.2, // Higher elasticity (0.6-0.8)
-                // Add bounce sound flag
+                maxBounces: Math.floor(Math.random() * 3) + 2, // 2-4 bounces before settling
                 playedBounceSound: false,
-                // Random delay before first bounce sound to avoid all playing at once
-                bounceSoundDelay: Math.random() * 300
+                bounceSoundDelay: Math.random() * 200, // Randomize sound delay
+                settled: false
             });
         }
         
@@ -775,6 +851,9 @@ export class Grenade {
             
             let activeCount = 0;
             
+            // Get arena boundaries from game constants
+            const arenaHalfSize = GAME.ARENA_SIZE / 2;
+            
             for (const debris of this.debrisParticles) {
                 if (debris.settled) continue;
                 activeCount++;
@@ -788,6 +867,55 @@ export class Grenade {
                 // Gravity with slightly slower fall for smaller debris
                 const gravity = 0.06 * deltaTime * 60 * (1 - (debris.mesh.scale.x - 0.6) / 0.6 * 0.3);
                 debris.direction.y -= gravity;
+                
+                // Wall collision checking with bouncing
+                // X-axis walls
+                if (Math.abs(debris.mesh.position.x) > arenaHalfSize - 0.5) {
+                    // Hit left or right wall - reverse X direction
+                    debris.direction.x *= -0.8; // Lose some energy, but bounce back
+                    
+                    // Keep within bounds
+                    if (debris.mesh.position.x > arenaHalfSize - 0.5) {
+                        debris.mesh.position.x = arenaHalfSize - 0.5;
+                    } else if (debris.mesh.position.x < -arenaHalfSize + 0.5) {
+                        debris.mesh.position.x = -arenaHalfSize + 0.5;
+                    }
+                    
+                    // Add some random variation to direction after bounce
+                    debris.direction.z += (Math.random() - 0.5) * 0.3;
+                    
+                    // Play bounce sound occasionally for wall hits
+                    if (this.audioManager && Math.random() < 0.3 && !debris.wallBounceSound) {
+                        debris.wallBounceSound = true;
+                        setTimeout(() => {
+                            this.audioManager.playGrenadeBounce();
+                        }, Math.random() * 100);
+                    }
+                }
+                
+                // Z-axis walls
+                if (Math.abs(debris.mesh.position.z) > arenaHalfSize - 0.5) {
+                    // Hit front or back wall - reverse Z direction
+                    debris.direction.z *= -0.8; // Lose some energy, but bounce back
+                    
+                    // Keep within bounds
+                    if (debris.mesh.position.z > arenaHalfSize - 0.5) {
+                        debris.mesh.position.z = arenaHalfSize - 0.5;
+                    } else if (debris.mesh.position.z < -arenaHalfSize + 0.5) {
+                        debris.mesh.position.z = -arenaHalfSize + 0.5;
+                    }
+                    
+                    // Add some random variation to direction after bounce
+                    debris.direction.x += (Math.random() - 0.5) * 0.3;
+                    
+                    // Play bounce sound occasionally for wall hits
+                    if (this.audioManager && Math.random() < 0.3 && !debris.wallBounceSound) {
+                        debris.wallBounceSound = true;
+                        setTimeout(() => {
+                            this.audioManager.playGrenadeBounce();
+                        }, Math.random() * 100);
+                    }
+                }
                 
                 // Ground collision with bouncing
                 if (debris.mesh.position.y < 0.15) {
@@ -878,45 +1006,71 @@ export class Grenade {
         fadeAnimation();
     }
     
-    deactivate() {
-        if (!this.isActive) return;
+    deactivate(forceCleanup = false) {
+        if (!this.isActive && !forceCleanup) return;
         
         this.isActive = false;
         
-        // Any remaining cleanup
-        if (this.mesh && this.mesh.parent) {
-            this.scene.remove(this.mesh);
-            this.mesh.geometry.dispose();
-            this.mesh.material.dispose();
-        }
+        // Clean up all created objects
+        this.cleanupObjects(forceCleanup);
+    }
+    
+    // New method to clean up all created objects
+    cleanupObjects(forceDispose = false) {
+        // Cancel any ongoing animations
+        this.animationIds.forEach(id => cancelAnimationFrame(id));
+        this.animationIds = [];
         
-        if (this.light && this.light.parent) {
-            this.scene.remove(this.light);
-        }
+        // Remove and dispose meshes
+        this.meshes.forEach(mesh => {
+            if (mesh && mesh.parent) {
+                this.scene.remove(mesh);
+                // Only dispose if we created them ourselves or force disposal is requested
+                if ((!this.sharedGeometries || forceDispose) && mesh.geometry) {
+                    mesh.geometry.dispose();
+                }
+                if ((!this.sharedMaterials || forceDispose) && mesh.material) {
+                    mesh.material.dispose();
+                }
+            }
+        });
+        this.meshes = [];
+        
+        // Remove lights
+        this.lights.forEach(light => {
+            if (light && light.parent) {
+                this.scene.remove(light);
+            }
+        });
+        this.lights = [];
         
         // Clean up trail particles
-        if (this.trailParticles) {
-            this.trailParticles.forEach(particle => {
-                if (particle && particle.parent) {
-                    this.scene.remove(particle);
-                    if (particle.geometry) particle.geometry.dispose();
-                    if (particle.material) particle.material.dispose();
+        this.trailParticles.forEach(particle => {
+            if (particle && particle.parent) {
+                this.scene.remove(particle);
+                if (!this.sharedGeometries && particle.geometry) {
+                    particle.geometry.dispose();
                 }
-            });
-            this.trailParticles = [];
-        }
+                if (!this.sharedMaterials && particle.material) {
+                    particle.material.dispose();
+                }
+            }
+        });
+        this.trailParticles = [];
         
         // Clean up debris particles
-        if (this.debrisParticles) {
-            this.debrisParticles.forEach(debris => {
-                if (debris.mesh && debris.mesh.parent) {
-                    this.scene.remove(debris.mesh);
-                    if (debris.mesh.geometry) debris.mesh.geometry.dispose();
-                    if (debris.mesh.material) debris.mesh.material.dispose();
+        this.debrisParticles.forEach(debris => {
+            if (debris.mesh && debris.mesh.parent) {
+                this.scene.remove(debris.mesh);
+                if (!this.sharedGeometries && debris.mesh.geometry) {
+                    debris.mesh.geometry.dispose();
                 }
-            });
-            this.debrisParticles = [];
-        }
+                if (!this.sharedMaterials && debris.mesh.material) {
+                    debris.mesh.material.dispose();
+                }
+            }
+        });
+        this.debrisParticles = [];
     }
     
     getPosition() {
@@ -1203,5 +1357,178 @@ export class OptimizedBullet {
         // Increase bullet collision radius to make hits easier
         const radius = SIZES.BULLET * 3.5;
         return radius; 
+    }
+}
+
+// Add this after the last existing class
+export class GrenadePool {
+    constructor(scene, audioManager, decalManager) {
+        this.scene = scene;
+        this.audioManager = audioManager;
+        this.decalManager = decalManager;
+        this.pool = [];
+        this.poolSize = 5; // Adjust based on expected max simultaneous grenades
+        this.activeGrenades = [];
+        
+        // Shared resources for all grenades
+        this.sharedGeometries = {
+            grenade: new THREE.DodecahedronGeometry(0.3, 0),
+            ring: new THREE.RingGeometry(0.08, 0.4, 8),
+            particle: new THREE.SphereGeometry(0.15, 6, 6),
+            debris: {
+                shard: new THREE.ConeGeometry(0.2, 0.8, 3),
+                chunk: new THREE.DodecahedronGeometry(0.3, 0),
+                splinter: new THREE.BoxGeometry(0.1, 0.6, 0.1),
+                plate: new THREE.BoxGeometry(0.4, 0.1, 0.4),
+                miniGrenade: new THREE.SphereGeometry(0.15, 6, 6)
+            }
+        };
+        
+        this.sharedMaterials = {
+            grenade: new THREE.MeshPhongMaterial({ 
+                color: 0xff3300, 
+                emissive: 0xff2200,
+                shininess: 80
+            }),
+            explosion: new THREE.MeshBasicMaterial({
+                color: 0x9B870C,
+                transparent: true,
+                opacity: 1.0,
+                side: THREE.DoubleSide,
+                blending: THREE.AdditiveBlending
+            }),
+            debris1: new THREE.MeshPhongMaterial({
+                color: 0x9B870C,
+                emissive: 0x9B870C,
+                emissiveIntensity: 0.3,
+                shininess: 40,
+                flatShading: true
+            }),
+            debris2: new THREE.MeshPhongMaterial({
+                color: 0x777777,
+                emissive: 0x444444,
+                emissiveIntensity: 0.1,
+                shininess: 60,
+                flatShading: true
+            }),
+            trailParticle: new THREE.MeshBasicMaterial({
+                color: 0xff5500,
+                transparent: true,
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending
+            })
+        };
+        
+        // Initialize the pool
+        this.initPool();
+    }
+    
+    initPool() {
+        for (let i = 0; i < this.poolSize; i++) {
+            const grenade = new Grenade(
+                this.scene, 
+                new THREE.Vector3(), 
+                new THREE.Vector3(),
+                this.audioManager,
+                this.decalManager
+            );
+            
+            // Assign shared resources
+            grenade.sharedGeometries = this.sharedGeometries;
+            grenade.sharedMaterials = this.sharedMaterials;
+            
+            // Deactivate immediately
+            grenade.deactivate(true);
+            
+            this.pool.push(grenade);
+        }
+    }
+    
+    getGrenade(position, direction) {
+        // Try to get a grenade from the pool
+        let grenade = this.pool.find(g => !g.isActive);
+        
+        // If no grenade is available, create a new one or reuse oldest one
+        if (!grenade) {
+            console.log("Grenade pool exhausted, creating new grenade");
+            grenade = new Grenade(
+                this.scene, 
+                position, 
+                direction,
+                this.audioManager,
+                this.decalManager
+            );
+            grenade.sharedGeometries = this.sharedGeometries;
+            grenade.sharedMaterials = this.sharedMaterials;
+        } else {
+            // Remove from pool
+            this.pool.splice(this.pool.indexOf(grenade), 1);
+            
+            // Reset the grenade
+            grenade.reset(position, direction);
+        }
+        
+        // Add to active grenades
+        this.activeGrenades.push(grenade);
+        
+        return grenade;
+    }
+    
+    recycleGrenade(grenade) {
+        // Remove from active grenades
+        const index = this.activeGrenades.indexOf(grenade);
+        if (index !== -1) {
+            this.activeGrenades.splice(index, 1);
+        }
+        
+        // Add back to pool
+        this.pool.push(grenade);
+    }
+    
+    update(dt) {
+        // Update all active grenades
+        for (let i = this.activeGrenades.length - 1; i >= 0; i--) {
+            const grenade = this.activeGrenades[i];
+            grenade.update(dt);
+            
+            // Check if grenade is no longer active
+            if (!grenade.isActive) {
+                this.recycleGrenade(grenade);
+            }
+        }
+    }
+    
+    cleanup() {
+        // Dispose of all shared resources
+        Object.values(this.sharedGeometries).forEach(geometry => {
+            if (typeof geometry === 'object' && geometry !== null) {
+                if (geometry.dispose) {
+                    geometry.dispose();
+                } else {
+                    // If it's an object of geometries
+                    Object.values(geometry).forEach(subGeometry => {
+                        if (subGeometry && subGeometry.dispose) {
+                            subGeometry.dispose();
+                        }
+                    });
+                }
+            }
+        });
+        
+        Object.values(this.sharedMaterials).forEach(material => {
+            if (material && material.dispose) {
+                material.dispose();
+            }
+        });
+        
+        // Clean up all grenades
+        [...this.pool, ...this.activeGrenades].forEach(grenade => {
+            if (grenade && grenade.deactivate) {
+                grenade.deactivate(true);
+            }
+        });
+        
+        this.pool = [];
+        this.activeGrenades = [];
     }
 } 

@@ -9,6 +9,7 @@ export class Player {
         this.position = new THREE.Vector3(0, 0, 0);
         this.rotation = 0;
         this.velocity = new THREE.Vector3(0, 0, 0);
+        this.recoilVelocity = new THREE.Vector3(0, 0, 0); // Add recoil velocity
         this.isMoving = false;
         this.stepTime = 0;
         this.stepDirection = 1; // 1 for right foot, -1 for left foot
@@ -331,12 +332,13 @@ export class Player {
         if (this.isDead || !this.controlsEnabled) {
             // Reset velocity and movement flags when controls disabled
             this.velocity.set(0, 0, 0);
+            this.recoilVelocity.set(0, 0, 0); // Reset recoil velocity too
             this.isMoving = false;
             this.movementIntensity = 0;
             return;
         }
 
-        // Reset velocity
+        // Reset movement velocity (but keep recoil velocity)
         this.velocity.set(0, 0, 0);
         
         // Fixed movement directions in world space (regardless of rotation)
@@ -360,24 +362,27 @@ export class Player {
             this.velocity.normalize();
             
             // Apply consistent speed using units-per-second (multiplied by delta time)
-            // Use the new SPEEDS.PLAYER value for consistent movement
             this.velocity.multiplyScalar(GAME.SPEEDS.PLAYER * dt * this.movementPenalty);
             this.isMoving = true;
-            
-            // Apply velocity directly to position
-            this.group.position.add(this.velocity);
-            
-            // Constrain to arena
-            const halfSize = GAME.ARENA_SIZE / 2;
-            this.group.position.x = Math.max(-halfSize, Math.min(halfSize, this.group.position.x));
-            this.group.position.z = Math.max(-halfSize, Math.min(halfSize, this.group.position.z));
-            
-            // Update position for collision detection
-            this.position.copy(this.group.position);
         } else {
             this.isMoving = false;
             this.movementIntensity = 0;
         }
+
+        // Apply both movement and recoil velocities
+        const totalVelocity = this.velocity.clone().add(this.recoilVelocity);
+        this.group.position.add(totalVelocity);
+        
+        // Decay recoil velocit3
+        this.recoilVelocity.multiplyScalar(0.3); // Reduce recoil by 10% each frame
+        
+        // Constrain to arena
+        const halfSize = GAME.ARENA_SIZE / 2;
+        this.group.position.x = Math.max(-halfSize, Math.min(halfSize, this.group.position.x));
+        this.group.position.z = Math.max(-halfSize, Math.min(halfSize, this.group.position.z));
+        
+        // Update position for collision detection
+        this.position.copy(this.group.position);
     }
     
     handleRotation(inputHandler, camera) {
@@ -466,8 +471,15 @@ export class Player {
         // Play gunshot sound
         this.audioManager.playGunshot();
         
-        // Apply recoil animation
+        // Apply recoil animation and movement
         this.body.scale.z = 0.8;
+        
+        // Add backward recoil force
+        const recoilForce = 0.3; // Increased recoil force
+        const backwardDirection = this.getDirection().clone().negate();
+        this.recoilVelocity.add(backwardDirection.multiplyScalar(recoilForce));
+        
+        // Reset scale after recoil
         setTimeout(() => {
             this.body.scale.z = 1;
         }, 50);
@@ -482,8 +494,15 @@ export class Player {
         const pitchVariation = 1.0 + (Math.random() - 0.5) * 0.2; // Random pitch between 0.9 and 1.1
         this.audioManager.playGunshot(pitchVariation);
         
-        // Apply slight recoil animation
+        // Apply recoil animation and movement
         this.body.scale.z = 0.85;
+        
+        // Add backward recoil force (slightly weaker for machine gun)
+        const recoilForce = 0.2; // Increased recoil force for machine gun
+        const backwardDirection = this.getDirection().clone().negate();
+        this.recoilVelocity.add(backwardDirection.multiplyScalar(recoilForce));
+        
+        // Reset scale after recoil
         setTimeout(() => {
             this.body.scale.z = 1;
         }, 30); // Faster recoil recovery for machine gun

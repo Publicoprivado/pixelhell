@@ -560,6 +560,7 @@ export class Enemy {
         const particleCount = 20;
         const particles = [];
         const size = this.getSizeByType() * 0.3;
+        const arenaHalfSize = GAME.ARENA_SIZE / 2;
         
         // Create paint particle geometries
         for (let i = 0; i < particleCount; i++) {
@@ -589,7 +590,10 @@ export class Enemy {
                 ),
                 gravity: -0.005,
                 lifetime: 1.0,
-                age: 0
+                age: 0,
+                bounceCount: 0,
+                elasticity: 0.7 + Math.random() * 0.2,
+                maxBounces: Math.floor(Math.random() * 3) + 1
             };
             
             this.scene.add(particle);
@@ -626,6 +630,58 @@ export class Enemy {
                 
                 // Move particle
                 particle.position.add(particle.userData.velocity);
+                
+                // Wall collision checking
+                // X-axis walls
+                if (Math.abs(particle.position.x) > arenaHalfSize - 0.5) {
+                    // Bounce off wall
+                    particle.userData.velocity.x *= -particle.userData.elasticity;
+                    particle.userData.bounceCount++;
+                    
+                    // Keep within bounds
+                    if (particle.position.x > arenaHalfSize - 0.5) {
+                        particle.position.x = arenaHalfSize - 0.5;
+                    } else if (particle.position.x < -arenaHalfSize + 0.5) {
+                        particle.position.x = -arenaHalfSize + 0.5;
+                    }
+                    
+                    // Add some random variation after bounce
+                    particle.userData.velocity.z += (Math.random() - 0.5) * 0.02;
+                }
+                
+                // Z-axis walls
+                if (Math.abs(particle.position.z) > arenaHalfSize - 0.5) {
+                    // Bounce off wall
+                    particle.userData.velocity.z *= -particle.userData.elasticity;
+                    particle.userData.bounceCount++;
+                    
+                    // Keep within bounds
+                    if (particle.position.z > arenaHalfSize - 0.5) {
+                        particle.position.z = arenaHalfSize - 0.5;
+                    } else if (particle.position.z < -arenaHalfSize + 0.5) {
+                        particle.position.z = -arenaHalfSize + 0.5;
+                    }
+                    
+                    // Add some random variation after bounce
+                    particle.userData.velocity.x += (Math.random() - 0.5) * 0.02;
+                }
+                
+                // Floor collision
+                if (particle.position.y < 0.1) {
+                    particle.position.y = 0.1;
+                    particle.userData.velocity.y = Math.abs(particle.userData.velocity.y) * particle.userData.elasticity;
+                    particle.userData.elasticity *= 0.8; // Reduce elasticity with each bounce
+                    particle.userData.bounceCount++;
+                    
+                    // Slow horizontal movement on ground contact
+                    particle.userData.velocity.x *= 0.9;
+                    particle.userData.velocity.z *= 0.9;
+                    
+                    // Stop bouncing after a few bounces
+                    if (particle.userData.bounceCount > particle.userData.maxBounces) {
+                        particle.userData.velocity.y = 0;
+                    }
+                }
                 
                 // Fade out
                 const remainingLife = 1 - (particle.userData.age / particle.userData.lifetime);
@@ -936,5 +992,161 @@ export class Enemy {
         
         // Update attached bullets
         this.updateAttachedBullets();
+    }
+    
+    reset(position, type = 'REGULAR') {
+        // Reset position
+        this.position = position.clone();
+        this.type = type;
+        
+        // Reset state
+        this.isActive = true;
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.speed = this.getSpeedByType();
+        this.health = this.getHealthByType();
+        this.jumpTime = Math.random() * 10;
+        this.attachedBullets = [];
+        this.isDying = false;
+        this.deathTime = 0;
+        this.hitEffects = [];
+        
+        // Generate a new unique ID
+        this.enemyId = Math.floor(Math.random() * 1000000);
+        
+        // Reset blown away state
+        this.isBlownAway = false;
+        this.blownAwayVelocity = new THREE.Vector3(0, 0, 0);
+        this.blownAwayRotation = new THREE.Vector3(0, 0, 0);
+        
+        // Reset shooting properties
+        this.lastShotTime = 0;
+        this.shootingCooldown = this.getShootingCooldownByType();
+        
+        // Clean up any existing mesh
+        if (this.mesh) {
+            this.scene.remove(this.mesh);
+            // Don't dispose geometry/materials as they're reused
+        }
+        
+        // Create new mesh with the updated type
+        this.createEnemyMesh();
+        
+        return this;
+    }
+    
+    deactivate() {
+        if (!this.isActive) return;
+        
+        this.isActive = false;
+        
+        // Remove all attached bullets
+        this.attachedBullets.forEach(bulletInfo => {
+            if (bulletInfo.bullet) {
+                bulletInfo.bullet.deactivate();
+            }
+        });
+        
+        // Don't remove the mesh from scene, just hide it for reuse
+        if (this.mesh) {
+            this.mesh.visible = false;
+        }
+    }
+}
+
+export class EnemyPool {
+    constructor(scene, spawnManager) {
+        this.scene = scene;
+        this.spawnManager = spawnManager;
+        this.pool = [];
+        this.poolSize = 20; // Initial pool size
+        this.activeEnemies = [];
+        
+        // Initialize the pool
+        this.initPool();
+    }
+    
+    initPool() {
+        for (let i = 0; i < this.poolSize; i++) {
+            // Create an enemy at a default position
+            const enemy = new Enemy(
+                this.scene, 
+                new THREE.Vector3(0, -100, 0), // Hidden position
+                'REGULAR', 
+                this.spawnManager
+            );
+            
+            // Deactivate immediately
+            enemy.deactivate();
+            
+            // Add to pool
+            this.pool.push(enemy);
+        }
+    }
+    
+    getEnemy(position, type = 'REGULAR') {
+        // Try to get an enemy from the pool
+        let enemy = this.pool.find(e => !e.isActive);
+        
+        // If no enemy is available, create a new one or grow the pool
+        if (!enemy) {
+            if (this.pool.length + this.activeEnemies.length < 50) { // Cap at 50 total enemies
+                console.log("Creating new enemy, pool exhausted");
+                enemy = new Enemy(this.scene, position, type, this.spawnManager);
+            } else {
+                // Take the oldest enemy from active enemies
+                enemy = this.activeEnemies.shift();
+            }
+        } else {
+            // Remove from pool
+            this.pool.splice(this.pool.indexOf(enemy), 1);
+        }
+        
+        // Reset and reposition the enemy
+        enemy.reset(position, type);
+        
+        // Add to active enemies
+        this.activeEnemies.push(enemy);
+        
+        return enemy;
+    }
+    
+    recycleEnemy(enemy) {
+        // Remove from active enemies
+        const index = this.activeEnemies.indexOf(enemy);
+        if (index !== -1) {
+            this.activeEnemies.splice(index, 1);
+        }
+        
+        // Add back to pool
+        this.pool.push(enemy);
+    }
+    
+    update(dt, playerPosition) {
+        // Update all active enemies
+        for (let i = this.activeEnemies.length - 1; i >= 0; i--) {
+            const enemy = this.activeEnemies[i];
+            enemy.update(dt, playerPosition);
+            
+            // Check if enemy is no longer active
+            if (!enemy.isActive) {
+                this.recycleEnemy(enemy);
+            }
+        }
+        
+        return this.activeEnemies;
+    }
+    
+    cleanup() {
+        // Properly dispose of all enemies
+        [...this.pool, ...this.activeEnemies].forEach(enemy => {
+            if (enemy.mesh) {
+                this.scene.remove(enemy.mesh);
+                enemy.mesh.geometry.dispose();
+                enemy.mesh.material.dispose();
+            }
+        });
+        
+        this.pool = [];
+        this.activeEnemies = [];
     }
 } 

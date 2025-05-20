@@ -10,9 +10,23 @@ import { SpawnManager } from './js/systems/spawn-manager.js';
 import { DecalManager } from './js/systems/decal-manager.js';
 import { GAME, SIZES } from './js/utils/constants.js';
 import { timeManager } from './js/utils/time-manager.js';
+import { IntroScreen } from './js/screens/intro-screen.js';
 
 class Game {
     constructor() {
+        // Add intro screen styles
+        IntroScreen.addStyles();
+        
+        // Create and show intro screen
+        this.introScreen = new IntroScreen();
+        this.introScreen.setStartCallback(() => this.initialize());
+        this.introScreen.startTyping();
+        
+        this.cameraTarget = new THREE.Vector3(); // Add camera target position
+        this.cameraOffset = new THREE.Vector3(0, 25, 25); // Store camera offset
+    }
+    
+    initialize() {
         this.scene = new THREE.Scene();
         // Use perspective camera with moderate field of view (like 50mm lens)
         this.camera = new THREE.PerspectiveCamera(
@@ -129,8 +143,8 @@ class Game {
             // Decrease player's grenade count
             this.player.grenades--;
             
-            // Create the grenade
-            const grenade = new Grenade(this.scene, grenadePosition, direction, this.audioManager, this.decalManager);
+            // Use the grenade pool from the spawn manager
+            const grenade = this.spawnManager.getGrenade(grenadePosition, direction);
             this.grenades.push(grenade);
             this.collisionSystem.addGrenade(grenade);
             
@@ -670,8 +684,8 @@ class Game {
             );
         }
         
-        // Create the grenade and pass the decalManager for explosion splats
-        const grenade = new Grenade(this.scene, position, direction, this.audioManager, this.decalManager);
+        // Use the grenade pool from the spawn manager instead of creating a new grenade
+        const grenade = this.spawnManager.getGrenade(position, direction);
         this.grenades.push(grenade);
         this.collisionSystem.addGrenade(grenade);
         
@@ -713,26 +727,39 @@ class Game {
     updateCamera() {
         if (!this.player) return;
         
-        // Make camera follow player with a natural perspective offset
+        // Get player position
         const playerPos = this.player.getPosition();
-        // Set camera position relative to player
-        const cameraOffset = new THREE.Vector3(0, 25, 25); // Matches setupCamera values
-        this.camera.position.set(
-            playerPos.x + cameraOffset.x,
-            playerPos.y + cameraOffset.y,
-            playerPos.z + cameraOffset.z
+        
+        // Calculate target camera position
+        const targetPos = new THREE.Vector3(
+            playerPos.x + this.cameraOffset.x,
+            playerPos.y + this.cameraOffset.y,
+            playerPos.z + this.cameraOffset.z
         );
-        this.camera.lookAt(playerPos.x, playerPos.y, playerPos.z);
+        
+        // Smoothly interpolate camera position
+        this.camera.position.lerp(targetPos, 0.1); // Adjust 0.1 for more/less lag
+        
+        // Calculate look target (slightly ahead of player in movement direction)
+        const lookTarget = new THREE.Vector3(
+            playerPos.x,
+            playerPos.y,
+            playerPos.z
+        );
+        
+        // Smoothly interpolate camera look target
+        this.cameraTarget.lerp(lookTarget, 0.1); // Same lerp factor for consistent feel
+        this.camera.lookAt(this.cameraTarget);
         
         // Update player spotlight position
         if (this.playerSpotlight) {
             this.playerSpotlight.position.copy(this.camera.position);
-            this.playerSpotlight.target.position.copy(playerPos);
+            this.playerSpotlight.target.position.copy(lookTarget);
         }
     }
     
     animate() {
-        requestAnimationFrame(this.animate.bind(this));
+        this.animationFrameId = requestAnimationFrame(this.animate.bind(this));
         
         // Get delta time from the TimeManager
         const delta = timeManager.getAutoDeltatime();
@@ -781,8 +808,8 @@ class Game {
                     // Decrease player's grenade count
                     this.player.grenades--;
                     
-                    // Create the grenade
-                    const grenade = new Grenade(this.scene, grenadePosition, direction, this.audioManager, this.decalManager);
+                    // Use the grenade pool
+                    const grenade = this.spawnManager.getGrenade(grenadePosition, direction);
                     this.grenades.push(grenade);
                     this.collisionSystem.addGrenade(grenade);
                     
@@ -816,7 +843,17 @@ class Game {
                 bullet.update(delta);
             }
         });
-        this.grenades.forEach(grenade => grenade.update(delta));
+        
+        // Update grenades using the pool system
+        this.spawnManager.updateGrenades(delta);
+        
+        // Update any legacy grenades that weren't created with the pool
+        this.grenades.forEach(grenade => {
+            // Skip grenades managed by the pool
+            if (grenade.isActive) {
+                grenade.update(delta);
+            }
+        });
         
         // Update pickups
         // Update ammo pickups (if they exist and have an update method)
@@ -873,6 +910,83 @@ class Game {
             this.decalManager // Pass decalManager to SpawnManager for enemy splats
         );
     }
+    
+    cleanup() {
+        console.log("Cleaning up game resources");
+        
+        // Clean up object pools
+        if (this.spawnManager) {
+            this.spawnManager.cleanup();
+        }
+        
+        // Dispose of geometries and materials
+        if (this.bulletManager) {
+            this.bulletManager.cleanUp();
+        }
+        
+        // Clean up any remaining grenades not in the pool
+        this.grenades.forEach(grenade => {
+            if (grenade && grenade.deactivate) {
+                grenade.deactivate(true);
+            }
+        });
+        this.grenades = [];
+        
+        // Clean up bullets
+        this.bullets.forEach(bullet => {
+            if (bullet && bullet.deactivate) {
+                bullet.deactivate();
+            }
+        });
+        this.bullets = [];
+        
+        // Clean up decals
+        if (this.decalManager) {
+            this.decalManager.cleanup();
+        }
+        
+        // Clear any timers or animation frames
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+        
+        // Dispose of scene objects
+        this.disposeSceneObjects(this.scene);
+        
+        console.log("Game resources cleaned up");
+    }
+    
+    disposeSceneObjects(obj) {
+        if (!obj) return;
+        
+        // Handle children recursively
+        if (obj.children && obj.children.length > 0) {
+            // Create a copy of the children array to avoid modification during iteration
+            const children = [...obj.children];
+            for (let i = 0; i < children.length; i++) {
+                this.disposeSceneObjects(children[i]);
+            }
+        }
+        
+        // Dispose of geometries and materials
+        if (obj.geometry) {
+            obj.geometry.dispose();
+        }
+        
+        if (obj.material) {
+            if (Array.isArray(obj.material)) {
+                obj.material.forEach(material => material.dispose());
+            } else {
+                obj.material.dispose();
+            }
+        }
+        
+        // Remove from parent
+        if (obj.parent) {
+            obj.parent.remove(obj);
+        }
+    }
 }
 
 // Modify the start screen creation in the DOMContentLoaded event handler
@@ -883,268 +997,6 @@ window.addEventListener('DOMContentLoaded', () => {
     fontLink.rel = 'stylesheet';
     document.head.appendChild(fontLink);
 
-    // Create a container for the start screen
-    const startContainer = document.createElement('div');
-    startContainer.style.position = 'fixed';
-    startContainer.style.top = '0';
-    startContainer.style.left = '0';
-    startContainer.style.width = '100%';
-    startContainer.style.height = '100%';
-    startContainer.style.backgroundColor = '#222222'; // Match game background
-    startContainer.style.display = 'flex';
-    startContainer.style.flexDirection = 'column';
-    startContainer.style.alignItems = 'center';
-    startContainer.style.justifyContent = 'center';
-    startContainer.style.zIndex = '1000';
-    startContainer.style.cursor = 'default';
-    startContainer.style.fontFamily = '"Press Start 2P", cursive';
-
-    // Add character preview container
-    const characterPreview = document.createElement('div');
-    characterPreview.style.width = '32px';
-    characterPreview.style.height = '32px';
-    characterPreview.style.backgroundColor = '#4444ff';
-    characterPreview.style.marginBottom = '40px';
-    characterPreview.style.transform = 'scale(0)';
-    characterPreview.style.transition = 'transform 0.3s ease-out';
-    characterPreview.style.borderRadius = '4px';
-    characterPreview.style.boxShadow = 'inset -4px -4px 0px 0px #2222aa';
-    startContainer.appendChild(characterPreview);
-
-    // Add title with pixel art shadow
-    const gameTitle = document.createElement('div');
-    gameTitle.textContent = 'PIXEL HELL';
-    gameTitle.style.color = '#ffffff';
-    gameTitle.style.fontSize = '48px';
-    gameTitle.style.marginBottom = '50px';
-    gameTitle.style.textShadow = '4px 4px 0px #000000';
-    gameTitle.style.opacity = '0';
-    gameTitle.style.transform = 'translateY(-20px)';
-    gameTitle.style.transition = 'opacity 0.5s ease-out, transform 0.5s ease-out';
-    startContainer.appendChild(gameTitle);
-
-    // Trigger title animation after a short delay
-    setTimeout(() => {
-        gameTitle.style.opacity = '1';
-        gameTitle.style.transform = 'translateY(0)';
-        // Show character preview with bounce effect
-        setTimeout(() => {
-            characterPreview.style.transform = 'scale(1.2)';
-            setTimeout(() => {
-                characterPreview.style.transform = 'scale(1)';
-            }, 150);
-        }, 500);
-    }, 100);
-
-    // Create pixel art style button
-    const startButton = document.createElement('button');
-    startButton.textContent = 'START GAME';
-    startButton.style.fontSize = '16px';
-    startButton.style.padding = '16px 32px';
-    startButton.style.backgroundColor = '#00aa00';
-    startButton.style.color = '#ffffff';
-    startButton.style.border = 'none';
-    startButton.style.cursor = 'pointer';
-    startButton.style.fontFamily = '"Press Start 2P", cursive';
-    startButton.style.position = 'relative';
-    startButton.style.textTransform = 'uppercase';
-    startButton.style.letterSpacing = '2px';
-    startButton.style.imageRendering = 'pixelated';
-    startButton.style.boxShadow = 'inset -4px -4px 0px 0px #006600';
-    startButton.style.outline = 'none';
-    
-    // Create pixel art border
-    startButton.style.border = '4px solid #ffffff';
-    startButton.style.borderStyle = 'solid';
-    startButton.style.borderWidth = '4px';
-    startButton.style.borderLeftColor = '#ffffff';
-    startButton.style.borderTopColor = '#ffffff';
-    startButton.style.borderRightColor = '#888888';
-    startButton.style.borderBottomColor = '#888888';
-    
-    // Add hover and active states
-    startButton.onmouseover = () => {
-        startButton.style.backgroundColor = '#00cc00';
-        startButton.style.boxShadow = 'inset -4px -4px 0px 0px #008800';
-    };
-    
-    startButton.onmouseout = () => {
-        startButton.style.backgroundColor = '#00aa00';
-        startButton.style.boxShadow = 'inset -4px -4px 0px 0px #006600';
-        startButton.style.transform = 'translate(0, 0)';
-        startButton.style.borderLeftColor = '#ffffff';
-        startButton.style.borderTopColor = '#ffffff';
-        startButton.style.borderRightColor = '#888888';
-        startButton.style.borderBottomColor = '#888888';
-    };
-    
-    startButton.onmousedown = () => {
-        startButton.style.transform = 'translate(2px, 2px)';
-        startButton.style.backgroundColor = '#008800';
-        startButton.style.boxShadow = 'inset -2px -2px 0px 0px #004400';
-        startButton.style.borderLeftColor = '#888888';
-        startButton.style.borderTopColor = '#888888';
-        startButton.style.borderRightColor = '#ffffff';
-        startButton.style.borderBottomColor = '#ffffff';
-    };
-    
-    startButton.onmouseup = () => {
-        startButton.style.transform = 'translate(0, 0)';
-        startButton.style.backgroundColor = '#00aa00';
-        startButton.style.boxShadow = 'inset -4px -4px 0px 0px #006600';
-        startButton.style.borderLeftColor = '#ffffff';
-        startButton.style.borderTopColor = '#ffffff';
-        startButton.style.borderRightColor = '#888888';
-        startButton.style.borderBottomColor = '#888888';
-    };
-    
-    // Add pixel art shadow behind button
-    const buttonShadow = document.createElement('div');
-    buttonShadow.style.position = 'absolute';
-    buttonShadow.style.top = '4px';
-    buttonShadow.style.left = '4px';
-    buttonShadow.style.width = '100%';
-    buttonShadow.style.height = '100%';
-    buttonShadow.style.backgroundColor = '#000000';
-    buttonShadow.style.zIndex = '-1';
-    startContainer.appendChild(buttonShadow);
-    
-    startContainer.appendChild(startButton);
-    document.body.appendChild(startContainer);
-    
-    // Start on click
-    startButton.addEventListener('click', async () => {
-        try {
-            // Start audio context
-            await Tone.start();
-            
-            // Play 3-note startup sound
-            const synth = new Tone.Synth({
-                oscillator: {
-                    type: "square" // 8-bit sound
-                },
-                envelope: {
-                    attack: 0.01,
-                    decay: 0.2,
-                    sustain: 0.2,
-                    release: 0.2
-                }
-            }).toDestination();
-            
-            // Play ascending notes with slight delay
-            synth.triggerAttackRelease("C4", "8n");
-            setTimeout(() => synth.triggerAttackRelease("E4", "8n"), 150);
-            setTimeout(() => synth.triggerAttackRelease("G4", "8n"), 300);
-            
-            // Animate elements out
-            gameTitle.style.opacity = '0';
-            gameTitle.style.transform = 'translateY(-20px)';
-            startButton.style.opacity = '0';
-            startButton.style.transform = 'translateY(20px)';
-            characterPreview.style.transform = 'scale(1.5)';
-            characterPreview.style.opacity = '0';
-            
-            // Wait for animations to complete
-            setTimeout(() => {
-                // Remove the start screen
-                document.body.removeChild(startContainer);
-                
-                // Initialize the game and expose it globally
-                window.gameInstance = new Game();
-                
-                // Add character entrance animation - falling from sky
-                if (window.gameInstance.player) {
-                    const player = window.gameInstance.player;
-                    
-                    // Disable player control until animation completes
-                    player.controlsEnabled = false;
-                    
-                    // Start player high in the sky
-                    player.group.position.set(0, 30, 5);
-                    player.group.scale.set(1, 1, 1);
-                    
-                    // Physics parameters
-                    let velocity = 0;
-                    const gravity = 0.08;
-                    const bounceCoefficient = 0.6;
-                    let isGrounded = false;
-                    let bounceCount = 0;
-                    const maxBounces = 3;
-                    
-                    // Animate player falling and bouncing
-                    function animatePlayerFall() {
-                        // Apply gravity
-                        velocity += gravity;
-                        player.group.position.y -= velocity;
-                        
-                        // Check for ground collision
-                        if (player.group.position.y <= 0 && !isGrounded) {
-                            // Bounce effect
-                            player.group.position.y = 0;
-                            velocity = -velocity * bounceCoefficient;
-                            
-                            // Flatten a bit on impact
-                            player.group.scale.set(1.2, 0.8, 1.2);
-                            setTimeout(() => {
-                                player.group.scale.set(1, 1, 1);
-                            }, 100);
-                            
-                            // Play a landing sound
-                            const landingSound = new Tone.Synth({
-                                oscillator: { type: "square" },
-                                envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 }
-                            }).toDestination();
-                            landingSound.volume.value = -10;
-                            landingSound.triggerAttackRelease(240 - (bounceCount * 40), "16n");
-                            
-                            bounceCount++;
-                            
-                            // Stop bouncing after a few bounces
-                            if (bounceCount >= maxBounces || Math.abs(velocity) < 0.3) {
-                                isGrounded = true;
-                                player.group.position.y = 0;
-                                
-                                // Small wobble effect to show landing complete
-                                setTimeout(() => {
-                                    player.group.scale.set(0.95, 1.05, 0.95);
-                                    setTimeout(() => {
-                                        player.group.scale.set(1, 1, 1);
-                                        
-                                        // Enable player control after animation completes
-                                        setTimeout(() => {
-                                            player.controlsEnabled = true;
-                                            
-                                            // Play a "ready" sound
-                                            const readySound = new Tone.Synth({
-                                                oscillator: { type: "square" },
-                                                envelope: { attack: 0.001, decay: 0.1, sustain: 0.1, release: 0.2 }
-                                            }).toDestination();
-                                            readySound.volume.value = -15;
-                                            
-                                            // Play a short ascending arpeggio
-                                            readySound.triggerAttackRelease("C4", "16n");
-                                            setTimeout(() => readySound.triggerAttackRelease("E4", "16n"), 100);
-                                            setTimeout(() => readySound.triggerAttackRelease("G4", "16n"), 200);
-                                            setTimeout(() => readySound.triggerAttackRelease("C5", "8n"), 300);
-                                        }, 300);
-                                    }, 100);
-                                }, 100);
-                                
-                                return;
-                            }
-                        }
-                        
-                        if (!isGrounded) {
-                            requestAnimationFrame(animatePlayerFall);
-                        }
-                    }
-                    
-                    // Start the animation
-                    animatePlayerFall();
-                }
-            }, 500);
-        } catch (error) {
-            console.error("Error starting game:", error);
-        }
-    });
+    // Initialize the game and expose it globally
+    window.gameInstance = new Game();
 }); 

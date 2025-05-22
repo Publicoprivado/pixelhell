@@ -273,6 +273,10 @@ export class Grenade {
         this.throwStrength = GAME.GRENADE_THROW_STRENGTH;
         this.explodeAfter = GAME.GRENADE_EXPLOSION_DELAY; // Cache this value
         
+        // Performance mode flag
+        this.lowPerformanceMode = false;
+        this.skipDebrisUpdate = false; // Flag to skip debris updates on some frames
+        
         // Physics parameters for proper arc trajectory
         this.gravityEffect = 0.02; 
         
@@ -567,8 +571,11 @@ export class Grenade {
         this.mesh.rotation.y += dt * 3;
         this.mesh.rotation.z += dt * 4;
         
-        // Update trail effect less frequently based on frame rate
-        this.updateTrailEffect();
+        // Update trail effect less frequently based on frame rate and performance mode
+        // In low performance mode, update trail even less frequently
+        if (!this.lowPerformanceMode || Math.random() > 0.5) {
+            this.updateTrailEffect();
+        }
         
         this.position.copy(this.mesh.position);
         
@@ -706,7 +713,8 @@ export class Grenade {
         this.lights.push(explosionLight);
         
         // Create explosion particles (significantly reduced count)
-        const particleCount = 30; // Reduced from 250
+        // Adjust particle count based on performance mode
+        const particleCount = this.lowPerformanceMode ? 10 : 30; // Reduce from 30 to 10 in low performance mode
         
         // Use shared geometry if available or create a new one
         let particles;
@@ -857,7 +865,8 @@ export class Grenade {
     
     createDebrisEffect() {
         // Create a good number of debris pieces
-        const debrisCount = 6;
+        // Adjust debris count based on performance mode
+        const debrisCount = this.lowPerformanceMode ? 3 : 6; // Reduce from 6 to 3 in low performance mode
         this.debrisParticles = [];
         
         // Get shared geometries if available
@@ -1551,6 +1560,9 @@ export class GrenadePool {
         this.useLightsForEffects = false; // Set to false to use emissive materials instead of lights
         this.useSimpleBlending = true;    // Set to true to use normal blending instead of additive
         
+        // Performance mode flag
+        this.lowPerformanceMode = false;
+        
         // Shared resources for all grenades
         this.sharedGeometries = {
             grenade: new THREE.DodecahedronGeometry(0.3, 0),
@@ -1657,6 +1669,9 @@ export class GrenadePool {
             grenade.reset(position, direction);
         }
         
+        // Apply performance mode settings
+        grenade.lowPerformanceMode = this.lowPerformanceMode;
+        
         // Add to active grenades
         this.activeGrenades.push(grenade);
         
@@ -1733,6 +1748,10 @@ export class BossBullet extends OptimizedBullet {
         this.hasExploded = false;
         this.explosionActive = false;
         
+        // Performance mode flag
+        this.lowPerformanceMode = false;
+        this.skipDebrisUpdate = false; // Flag to skip debris updates on some frames
+        
         // Increase the size of the bullet (but less than before)
         if (this.mesh) {
             this.mesh.scale.set(1.4, 1.4, 1.4); // Reduced from 1.7
@@ -1807,31 +1826,14 @@ export class BossBullet extends OptimizedBullet {
     update(dt) {
         if (!this.isActive) return;
         
-        // Update position
-        const distance = this.speed * dt;
-        this.position.add(this.direction.clone().multiplyScalar(distance));
-        
-        if (this.mesh) {
-            this.mesh.position.copy(this.position);
-            // Rotate the bullet for better visual effect
-            this.mesh.rotation.x += dt * 10;
-            this.mesh.rotation.z += dt * 10;
+        // Skip debris updates if requested (for frame skipping)
+        if (this.skipDebrisUpdate && this.debrisParticles && this.debrisParticles.length > 0) {
+            this.skipDebrisUpdate = false;
+            return;
         }
         
-        // Update light position to follow bullet
-        if (this.light) {
-            this.light.position.copy(this.position);
-        }
-        
-        // Calculate distance traveled from initial position
-        const currentDistanceFromStart = this.position.distanceTo(this.initialPosition);
-        this.distanceTraveled = currentDistanceFromStart;
-        
-        // Check if bullet has exceeded maximum distance
-        if (this.distanceTraveled > this.maxTravelDistance) {
-
-            this.explode(); // Explode when max distance reached
-        }
+        // Continue with regular update
+        super.update(dt);
     }
     
     explode() {
@@ -1949,7 +1951,8 @@ export class BossBullet extends OptimizedBullet {
         this.lights.push(explosionLight);
         
         // Create explosion particles (significantly reduced count)
-        const particleCount = 15; // Reduced from 250
+        // Adjust particle count based on performance mode
+        const particleCount = this.lowPerformanceMode ? 5 : 15; // Reduce from 15 to 5 in low performance mode
         
         // Use shared geometry if available or create a new one
         let particles;
@@ -2100,7 +2103,8 @@ export class BossBullet extends OptimizedBullet {
     
     createDebrisEffect() {
         // Create a good number of debris pieces
-        const debrisCount = 12;
+        // Adjust debris count based on performance mode
+        const debrisCount = this.lowPerformanceMode ? 4 : 12; // Reduce from 12 to 4 in low performance mode
         this.debrisParticles = [];
         
         // Get shared geometries if available

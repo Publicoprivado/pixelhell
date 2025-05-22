@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as Tone from 'tone';
+import Stats from 'stats.js';
 import { InputHandler } from './js/utils/input-handler.js';
 import { AudioManager } from './js/audio/audio-manager.js';
 import { Player } from './js/entities/player.js';
@@ -8,12 +9,35 @@ import { Bullet, Grenade, OptimizedBullet, BulletManager } from './js/entities/p
 import { CollisionSystem } from './js/systems/collision-system.js';
 import { SpawnManager } from './js/systems/spawn-manager.js';
 import { DecalManager } from './js/systems/decal-manager.js';
+import { PickupEffectManager } from './js/systems/pickup-effect-manager.js';
 import { GAME, SIZES } from './js/utils/constants.js';
 import { timeManager } from './js/utils/time-manager.js';
 import { IntroScreen } from './js/screens/intro-screen.js';
 
 class Game {
     constructor() {
+        // Add stats.js
+        this.stats = new Stats();
+        this.stats.showPanel(0); // 0: fps, 1: ms, 2: mb, 3+: custom
+        document.body.appendChild(this.stats.dom);
+        
+        // Position the stats panel in the top-right corner
+        this.stats.dom.style.position = 'absolute';
+        this.stats.dom.style.top = '0px';
+        this.stats.dom.style.right = '0px';
+        this.stats.dom.style.left = 'auto';
+        
+        // Performance optimization variables
+        this.fpsHistory = [];
+        this.fpsHistoryMaxLength = 30; // Keep track of ~0.5 second of frames
+        this.lowFpsThreshold = 40;
+        this.isLowPerformanceMode = false;
+        this.lastFrameTime = performance.now(); // Track frame times for FPS calculation
+        this.lastFpsLogTime = 0; // For throttling FPS logging
+        
+        // Track shooting state to detect when player stops shooting
+        this.wasShootingLastFrame = false;
+        
         // Add intro screen styles
         IntroScreen.addStyles();
         
@@ -54,9 +78,11 @@ class Game {
         this.audioManager = new AudioManager();
         this.collisionSystem = new CollisionSystem();
         this.decalManager = new DecalManager(this.scene);
+        this.pickupEffectManager = new PickupEffectManager(this.scene);
         this.bulletManager = new BulletManager(this.scene);
         this.bulletManager.setDecalManager(this.decalManager);
         this.collisionSystem.setBulletManager(this.bulletManager);
+        this.collisionSystem.setPickupEffectManager(this.pickupEffectManager);
         
         // Disable debug mode
         this.debugMode = false;
@@ -87,6 +113,13 @@ class Game {
         
         // Setup resize handler
         window.addEventListener('resize', this.onWindowResize.bind(this));
+        
+        // Add a key handler for toggling stats display
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'f' || e.key === 'F') {
+                this.toggleStats();
+            }
+        });
         
         // Add a debounce flag for right-click
         this.rightClickDebounce = false;
@@ -761,12 +794,31 @@ class Game {
     animate() {
         this.animationFrameId = requestAnimationFrame(this.animate.bind(this));
         
+        // Begin stats measurement
+        this.stats.begin();
+        
         // Get delta time from the TimeManager
         const delta = timeManager.getAutoDeltatime();
+        
+        // Monitor FPS and adjust quality if needed
+        this.monitorPerformance();
         
         // Update player
         if (this.player) {
             this.player.update(delta, this.inputHandler, this.raycaster, this.camera);
+            
+            // Update crosshair rotation to point in firing direction
+            this.inputHandler.updateCrosshairRotation(this.player.rotation);
+            
+            // Track if player was shooting last frame
+            if (!this.wasShootingLastFrame && this.inputHandler.keys.shoot) {
+                this.wasShootingLastFrame = true;
+            } else if (this.wasShootingLastFrame && !this.inputHandler.keys.shoot) {
+                // Player just stopped shooting
+                this.wasShootingLastFrame = false;
+                // Stop gunshot sounds
+                this.audioManager.stopGunshot();
+            }
             
             // Handle shooting
             if (this.inputHandler.keys.shoot) {
@@ -896,6 +948,9 @@ class Game {
         
         // Render scene
         this.renderer.render(this.scene, this.camera);
+        
+        // End stats measurement
+        this.stats.end();
     }
     
     createSpawnManager() {
@@ -907,7 +962,8 @@ class Game {
             this.player,
             this.collisionSystem,
             this.audioManager,
-            this.decalManager // Pass decalManager to SpawnManager for enemy splats
+            this.decalManager, // Pass decalManager to SpawnManager for enemy splats
+            this // Pass a reference to the game instance
         );
     }
     
@@ -943,6 +999,11 @@ class Game {
         // Clean up decals
         if (this.decalManager) {
             this.decalManager.cleanup();
+        }
+        
+        // Clean up pickup effects
+        if (this.pickupEffectManager) {
+            this.pickupEffectManager.cleanup();
         }
         
         // Clear any timers or animation frames
@@ -986,6 +1047,140 @@ class Game {
         if (obj.parent) {
             obj.parent.remove(obj);
         }
+    }
+    
+    toggleStats() {
+        // Toggle stats visibility
+        if (this.stats.dom.style.display === 'none') {
+            this.stats.dom.style.display = 'block';
+        } else {
+            this.stats.dom.style.display = 'none';
+        }
+    }
+    
+    monitorPerformance() {
+        // Get current FPS from stats.js - with better error handling
+        let currentFps = 60; // Default fallback value
+        
+        try {
+            // Try to get FPS from the DOM structure
+            if (this.stats && this.stats.dom && this.stats.dom.children[0] && 
+                this.stats.dom.children[0].children[3]) {
+                currentFps = parseFloat(this.stats.dom.children[0].children[3].textContent);
+            }
+            
+            // If we got NaN or an invalid value, use a fallback
+            if (isNaN(currentFps) || currentFps <= 0 || currentFps > 1000) {
+                // Estimate FPS from delta time
+                const frameDelta = this.lastFrameTime ? (performance.now() - this.lastFrameTime) : 16.67;
+                currentFps = Math.round(1000 / frameDelta);
+            }
+            
+            // Store current time for next frame delta calculation
+            this.lastFrameTime = performance.now();
+        } catch (e) {
+            console.warn("Error getting FPS, using fallback value:", e);
+            // Keep using the default 60 fps
+        }
+        
+        // Store in history
+        this.fpsHistory.push(currentFps);
+        if (this.fpsHistory.length > this.fpsHistoryMaxLength) {
+            this.fpsHistory.shift();
+        }
+        
+        // Calculate average FPS
+        const avgFps = this.fpsHistory.reduce((sum, fps) => sum + fps, 0) / this.fpsHistory.length;
+        
+        // Log FPS values occasionally (every ~3 seconds)
+        if (!this.lastFpsLogTime || performance.now() - this.lastFpsLogTime > 3000) {
+            console.log(`FPS - Current: ${Math.round(currentFps)}, Average: ${Math.round(avgFps)}, Mode: ${this.isLowPerformanceMode ? 'LOW' : 'NORMAL'}`);
+            this.lastFpsLogTime = performance.now();
+        }
+        
+        // Check if we should switch to low performance mode
+        if (!this.isLowPerformanceMode && avgFps < this.lowFpsThreshold && this.fpsHistory.length >= 10) {
+            this.isLowPerformanceMode = true;
+            console.log("Switching to low performance mode");
+            this.applyLowPerformanceSettings();
+        } 
+        // Switch back to normal mode if FPS is good again
+        else if (this.isLowPerformanceMode && avgFps > this.lowFpsThreshold + 10 && this.fpsHistory.length >= 20) {
+            this.isLowPerformanceMode = false;
+            console.log("Switching back to normal performance mode");
+            this.applyNormalPerformanceSettings();
+        }
+    }
+    
+    applyLowPerformanceSettings() {
+        // Reduce effects and optimize rendering for low FPS
+        
+        // 1. Reduce particle counts
+        if (this.spawnManager && this.spawnManager.grenadePool) {
+            // Reduce debris count for grenades
+            this.spawnManager.grenadePool.lowPerformanceMode = true;
+        }
+        
+        // 2. Disable some visual effects
+        this.disableVisualEffects = true;
+        
+        // 3. Reduce shadow quality
+        if (this.renderer) {
+            this.renderer.shadowMap.autoUpdate = false;
+        }
+        
+        // Notify the player
+        this.showPerformanceModeMessage("Performance Mode: Low");
+    }
+    
+    applyNormalPerformanceSettings() {
+        // Restore normal effects and rendering
+        
+        // 1. Restore particle counts
+        if (this.spawnManager && this.spawnManager.grenadePool) {
+            this.spawnManager.grenadePool.lowPerformanceMode = false;
+        }
+        
+        // 2. Re-enable visual effects
+        this.disableVisualEffects = false;
+        
+        // 3. Restore shadow quality
+        if (this.renderer) {
+            this.renderer.shadowMap.autoUpdate = true;
+        }
+        
+        // Notify the player
+        this.showPerformanceModeMessage("Performance Mode: Normal");
+    }
+    
+    showPerformanceModeMessage(message) {
+        // Create or update the performance mode message
+        let perfModeElement = document.getElementById('perf-mode-message');
+        
+        if (!perfModeElement) {
+            perfModeElement = document.createElement('div');
+            perfModeElement.id = 'perf-mode-message';
+            perfModeElement.style.position = 'fixed';
+            perfModeElement.style.bottom = '80px';
+            perfModeElement.style.left = '50%';
+            perfModeElement.style.transform = 'translateX(-50%)';
+            perfModeElement.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+            perfModeElement.style.color = '#ffffff';
+            perfModeElement.style.padding = '8px 16px';
+            perfModeElement.style.borderRadius = '4px';
+            perfModeElement.style.fontFamily = '"Press Start 2P", cursive';
+            perfModeElement.style.fontSize = '10px';
+            perfModeElement.style.zIndex = '1000';
+            document.body.appendChild(perfModeElement);
+        }
+        
+        perfModeElement.textContent = message;
+        
+        // Hide the message after 3 seconds
+        perfModeElement.style.display = 'block';
+        setTimeout(() => {
+            perfModeElement.style.display = 'none';
+        }, 3000);
     }
 }
 

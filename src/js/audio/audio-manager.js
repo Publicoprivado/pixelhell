@@ -7,6 +7,16 @@ export class AudioManager {
         this.sounds = {};
         this.lastPlayTime = 0;
         this.minPlayGap = 0.05; // 50ms minimum gap between sounds
+        this.gunshotStopTimeout = null; // For tracking the gunshot stop timeout
+        this.lastLogTime = 0; // For tracking debug logging time
+        
+        // Add gunshot synth pool for better performance
+        this.gunshotSynthPool = [];
+        this.maxGunshotSynths = 10; // Increased from 5 for better performance with rapid fire
+        this.currentGunshotSynthIndex = 0;
+        
+        // Debug flag to control logging
+        this.enableDebugLogging = false;
         
         // Add multiple musical scales focused on happy/Nintendo-like sounds
         this.musicalScales = {
@@ -76,8 +86,32 @@ export class AudioManager {
                 sustain: 0,   // No sustain for cleaner sound
                 release: 0.1  // Quick release
             },
-            volume: -74  // Lower volume from -12 to -18
+            volume: -18  // Louder volume for better audio feedback
         }).toDestination();
+        
+        // Initialize gunshot synth pool
+        for (let i = 0; i < this.maxGunshotSynths; i++) {
+            const gunSynth = new Tone.Synth({
+                oscillator: {
+                    type: 'square',
+                    width: 0.3
+                },
+                envelope: {
+                    attack: 0.001,
+                    decay: 0.1,
+                    sustain: 0,
+                    release: 0.1
+                },
+                volume: -28 // Match hihat volume
+            }).toDestination();
+            
+            this.gunshotSynthPool.push({
+                synth: gunSynth,
+                inUse: false,
+                lastUsed: 0,
+                releaseTimeout: null
+            });
+        }
         
         // Create 8-bit explosion synth
         this.tom = new Tone.Synth({
@@ -216,9 +250,87 @@ export class AudioManager {
     }
     
     playGunshot(pitchModifier = 1.0) {
-        // Use A3 for a lower, less piercing sound (was D5)
+        // Use A3 for a lower, less piercing sound
         const basePitch = 'A3';
-        this.playSound('GUNSHOT', basePitch, pitchModifier);
+        
+        if (!this.isInitialized || Tone.context.state !== 'running') {
+            console.warn('Audio not initialized or context not running');
+            return;
+        }
+        
+        try {
+            // Get current time
+            const now = Tone.now();
+            
+            // Occasionally log synth pool status for debugging (every ~2 seconds)
+            if (this.enableDebugLogging && (!this.lastLogTime || now - this.lastLogTime > 2)) {
+                this.logSynthPoolStatus();
+                this.lastLogTime = now;
+            }
+            
+            // Get a synth from the pool
+            const synthInfo = this.getNextGunshotSynth();
+            if (!synthInfo) {
+                console.warn('No available gunshot synths');
+                return;
+            }
+            
+            // Mark synth as in use
+            synthInfo.inUse = true;
+            synthInfo.lastUsed = now;
+            
+            // Apply pitch modifier to frequency
+            const baseFreq = Tone.Frequency(basePitch).toFrequency();
+            const modifiedFreq = baseFreq * pitchModifier;
+            
+            // Use extremely short duration for more precise control
+            const duration = 0.05; // 50ms duration
+            
+            // Make sure any previous sound on this synth is stopped
+            synthInfo.synth.triggerRelease();
+            
+            // Set volume from sound options
+            synthInfo.synth.volume.value = SOUNDS.GUNSHOT.options.volume;
+            
+            // Play the sound with a specific duration
+            synthInfo.synth.triggerAttackRelease(modifiedFreq, duration, now);
+            
+            // Automatically mark synth as available after the sound finishes
+            if (synthInfo.releaseTimeout) {
+                clearTimeout(synthInfo.releaseTimeout);
+            }
+            
+            synthInfo.releaseTimeout = setTimeout(() => {
+                synthInfo.synth.triggerRelease();
+                synthInfo.inUse = false;
+            }, duration * 1000 + 100); // Add a small buffer (100ms)
+            
+        } catch (e) {
+            console.error('Error playing gunshot sound:', e);
+        }
+    }
+    
+    // Helper method to get the next available gunshot synth
+    getNextGunshotSynth() {
+        // First try to find any unused synth
+        for (let i = 0; i < this.gunshotSynthPool.length; i++) {
+            if (!this.gunshotSynthPool[i].inUse) {
+                return this.gunshotSynthPool[i];
+            }
+        }
+        
+        // If all are in use, use the one that was used longest ago
+        let oldestSynthIndex = 0;
+        let oldestTime = Infinity;
+        
+        for (let i = 0; i < this.gunshotSynthPool.length; i++) {
+            if (this.gunshotSynthPool[i].lastUsed < oldestTime) {
+                oldestTime = this.gunshotSynthPool[i].lastUsed;
+                oldestSynthIndex = i;
+            }
+        }
+        
+        return this.gunshotSynthPool[oldestSynthIndex];
     }
     
     playExplosion() {
@@ -509,5 +621,80 @@ export class AudioManager {
         
         // Update timestamp
         this.lastFootstepTime = now;
+    }
+
+    // Add a new method to stop gunshot sounds and make sure they don't continue playing
+    stopGunshot() {
+        if (!this.isInitialized || Tone.context.state !== 'running') return;
+        
+        try {
+            // Explicitly stop all gunshot synths in the pool
+            for (let i = 0; i < this.gunshotSynthPool.length; i++) {
+                const synthInfo = this.gunshotSynthPool[i];
+                if (synthInfo.inUse) {
+                    synthInfo.synth.triggerRelease();
+                    synthInfo.inUse = false;
+                    
+                    // Clear any pending timeouts
+                    if (synthInfo.releaseTimeout) {
+                        clearTimeout(synthInfo.releaseTimeout);
+                        synthInfo.releaseTimeout = null;
+                    }
+                }
+            }
+            
+            // Log when we stop gunshots
+            if (this.enableDebugLogging) {
+                console.log("Stopping all gunshot sounds");
+                this.logSynthPoolStatus();
+            }
+        } catch (e) {
+            console.error('Error stopping gunshot sounds:', e);
+        }
+    }
+    
+    // Add a method to explicitly trigger synth release for any sound
+    stopSound(soundType) {
+        if (!this.isInitialized || Tone.context.state !== 'running') return;
+        
+        try {
+            const sound = SOUNDS[soundType];
+            if (!sound) return;
+            
+            let synth;
+            switch (sound.type) {
+                case 'hihat':
+                    synth = this.hihat;
+                    break;
+                case 'tom':
+                    synth = this.tom;
+                    break;
+                case 'click':
+                    synth = this.click;
+                    break;
+                case 'ping':
+                    synth = this.ping;
+                    break;
+                case 'footstep':
+                    synth = this.footstep;
+                    break;
+                default:
+                    return;
+            }
+            
+            if (synth) {
+                synth.triggerRelease();
+            }
+        } catch (e) {
+            console.error('Error stopping sound:', e);
+        }
+    }
+
+    // Debug method to log synth pool status
+    logSynthPoolStatus() {
+        if (!this.gunshotSynthPool || !this.enableDebugLogging) return;
+        
+        const inUseCount = this.gunshotSynthPool.filter(info => info.inUse).length;
+        console.log(`Gunshot synth pool: ${inUseCount}/${this.gunshotSynthPool.length} in use`);
     }
 } 

@@ -17,9 +17,9 @@ export class InputHandler {
         
         // Add debounce mechanism
         this.rightClickDebounce = false;
-        this.rightClickDebounceTime = 800; // Increased to match main.js
+        this.rightClickDebounceTime = 800;
         this.lastRightClickTime = 0;
-        this.rightClickMinInterval = 1000; // Same as in main.js
+        this.rightClickMinInterval = 1000;
 
         // Get crosshair element
         this.crosshair = document.getElementById('crosshair');
@@ -59,7 +59,6 @@ export class InputHandler {
                 this.mouse.isDown = true;
                 this.keys.shoot = true;
             } else if (e.button === 2) { // Right click for grenades
-                // Set grenade key to true - let the game handle debouncing
                 this.keys.grenade = true;
             }
         });
@@ -69,7 +68,6 @@ export class InputHandler {
                 this.mouse.isDown = false;
                 this.keys.shoot = false;
             } else if (e.button === 2) { // Right click
-                // Reset after a short delay to ensure it's processed
                 setTimeout(() => {
                     this.keys.grenade = false;
                 }, 50);
@@ -106,6 +104,19 @@ export class InputHandler {
             case 'g':
                 this.keys.grenade = isPressed;
                 break;
+        }
+    }
+    
+    // Update crosshair rotation to point in firing direction
+    updateCrosshairRotation(playerRotation) {
+        if (this.crosshair && playerRotation !== undefined) {
+            // Convert player rotation to degrees and rotate the arrow
+            // Player rotation is in radians, convert to degrees
+            // Add 180 degrees to flip the arrow so white dot points outward (firing direction)
+            const rotationDegrees = -(playerRotation * 180 / Math.PI) + 180;
+            
+            // Apply rotation to make arrow point in firing direction
+            this.crosshair.style.transform = `translate(-50%, -50%) rotate(${rotationDegrees}deg)`;
         }
     }
 } 

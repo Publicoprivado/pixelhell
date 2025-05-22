@@ -1152,6 +1152,11 @@ export class Boss extends Enemy {
             this.spawnManager.audioManager
         );
         
+        // Check if the game is in low performance mode
+        if (this.spawnManager.game && this.spawnManager.game.isLowPerformanceMode) {
+            bullet.lowPerformanceMode = true;
+        }
+        
         if (this.spawnManager) {
             this.spawnManager.addEnemyBullet(bullet);
         }

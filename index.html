@@ -20,23 +20,43 @@
         height: 100%;
         display: block;
       }
-      /* Crosshair styles */
+      
+      /* Arrow crosshair styles */
       #crosshair {
         position: fixed;
-        width: 8px;
-        height: 8px;
+        width: 0;
+        height: 0;
         pointer-events: none; /* Makes it click-through */
         transform: translate(-50%, -50%);
         z-index: 1000;
         display: none; /* Initially hidden, will be shown after game start */
-        background-color: magenta;
+        
+        /* Create arrow shape using CSS borders */
+        border-left: 10px solid transparent;
+        border-right: 10px solid transparent;
+        border-bottom: 16px solid #ff0080; /* Bright pink/magenta */
+        
+        /* Add glow effect for visibility */
+        filter: drop-shadow(0 0 6px #ff0080) drop-shadow(0 0 12px #ff0080);
+      }
+      
+      /* Add a small center dot for precise aiming */
+      #crosshair::after {
+        content: '';
+        position: absolute;
+        width: 4px;
+        height: 4px;
+        background-color: #ffffff;
         border-radius: 50%;
-        box-shadow: 0 0 4px magenta;
+        left: 50%;
+        top: 100%;
+        transform: translate(-50%, 2px);
+        box-shadow: 0 0 4px #ffffff;
       }
     </style>
   </head>
   <body>
-    <!-- Crosshair element -->
+    <!-- Arrow crosshair element -->
     <div id="crosshair"></div>
     <script type="module" src="./src/main.js?v=<?php echo time(); ?>"></script>
   </body>

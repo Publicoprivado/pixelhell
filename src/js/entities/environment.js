@@ -298,7 +298,7 @@ export class AmmoPack {
         this.arrow.geometry.dispose();
         this.arrow.material.dispose();
         
-        this.audioManager.playPickup();
+        this.audioManager.playPickup('ammo');
         
         return this.ammoAmount;
     }
@@ -427,7 +427,7 @@ export class EnergyPack {
         }
         
         // Play pickup sound
-        this.audioManager.playPickup();
+        this.audioManager.playPickup('energy');
         
         return this.energyAmount;
     }

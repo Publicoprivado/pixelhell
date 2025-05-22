@@ -9,10 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "stats.js": "^0.17.0",
     "three": "^0.162.0",
     "tone": "^14.7.77"
   },
   "devDependencies": {
-    "vite": "^5.1.4"
+    "vite": "^5.4.19"
   }
-} 
+}

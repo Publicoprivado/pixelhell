@@ -6,12 +6,13 @@ import { TextLabel } from '../utils/text-label.js';
 import { GrenadePool } from '../entities/projectiles.js';
 
 export class SpawnManager {
-    constructor(scene, player, collisionSystem, audioManager, decalManager) {
+    constructor(scene, player, collisionSystem, audioManager, decalManager, game) {
         this.scene = scene;
         this.player = player;
         this.collisionSystem = collisionSystem;
         this.audioManager = audioManager;
         this.decalManager = decalManager; // Store decalManager for enemy splats
+        this.game = game; // Store reference to the game instance
         this.enemies = [];
         this.obstacles = [];
         this.lastSpawnTime = 0;
@@ -766,7 +767,7 @@ class GrenadePack {
         }
         
         // Play pickup sound
-        this.audioManager.playPickup();
+        this.audioManager.playPickup('grenade');
         
         return this.grenadeAmount;
     }
